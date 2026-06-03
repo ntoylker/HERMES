@@ -1,0 +1,14 @@
+# Environments
+.env
+venv/
+__pycache__/
+
+# Large / Binary Data Files
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.npy
+*.jsonl
+
+# Original STIX bundle (too large for standard GitHub)
+enterprise-attack/
