@@ -14,6 +14,8 @@ Recommended repo layout:
 - [data/raw/enterprise-attack/enterprise-attack.json](data/raw/enterprise-attack/enterprise-attack.json)
 - [data/processed/rag_offense_mitre_chunks.jsonl](data/processed/rag_offense_mitre_chunks.jsonl)
 - [data/eval/eval_cases.jsonl](data/eval/eval_cases.jsonl)
+- [data/human_outs/](data/human_outs)
+- [data/machine_outs/](data/machine_outs)
 - [artifacts/offense_index/](artifacts/offense_index)
 - [artifacts/offense_index_lex/](artifacts/offense_index_lex)
 - [cache/query_cache.sqlite](cache/query_cache.sqlite)
@@ -125,7 +127,11 @@ The query embedding cache is stored as `cache/query_cache.sqlite`, not inside th
 
 ## 5) Generate technique links (RAG)
 
-This wraps retrieval + Gemini generation and returns JSON with citations.
+This wraps retrieval + Gemini generation and writes:
+- a pretty `.json` file to `data/human_outs/`
+- a compact `.jsonl` file to `data/machine_outs/`
+
+For implementation details (ranking logic, source/citation behavior, and alternatives generation), see [GENERATE_OFFENSE_RAG_INTERNALS.md](GENERATE_OFFENSE_RAG_INTERNALS.md).
 
 ```bash
 ./venv/bin/python generate_offense_rag.py \
@@ -138,6 +144,10 @@ Optional knobs:
 - `--vector-k`, `--bm25-k`, `--lexical-weight` if you are intentionally deviating from the standard config
 - `--max-sources`, `--max-chars-per-source`
 - `--gen-model`, `--temperature`, `--max-output-tokens`
+- `--human-output-dir` to override the default `data/human_outs/` destination
+- `--machine-output-dir` to override the default `data/machine_outs/` destination
+
+The `.json` file is the human-friendly view; the `.jsonl` file is the machine-friendly line-delimited artifact.
 
 ## 6) Evaluate retrieval
 

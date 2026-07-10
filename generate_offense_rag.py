@@ -4,6 +4,7 @@ import os
 import sqlite3
 import subprocess
 import sys
+from datetime import datetime
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -96,6 +97,20 @@ def _parse_json_response(text: str) -> dict | None:
 def _env(name: str) -> str | None:
     value = os.getenv(name)
     return value if value and value.strip() else None
+
+
+def _timestamped_stem() -> str:
+    timestamp = datetime.now().strftime("%Y%m%d_%H_%M_%S")
+    return timestamp
+
+
+def _write_jsonl_record(path: Path, payload: dict) -> None:
+    with path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+
+
+def _write_pretty_json(path: Path, payload: dict) -> None:
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
 def _run_retrieval(
@@ -304,6 +319,16 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Generate technique links with citations over the offense index")
     parser.add_argument("query", help="User query")
     parser.add_argument("--index-dir", default="artifacts/offense_index", help="Index directory")
+    parser.add_argument(
+        "--human-output-dir",
+        default="data/human_outs",
+        help="Directory for timestamped pretty JSON output files",
+    )
+    parser.add_argument(
+        "--machine-output-dir",
+        default="data/machine_outs",
+        help="Directory for timestamped JSONL output files",
+    )
     parser.add_argument("--top-techniques", type=int, default=8, help="How many techniques to retrieve")
     parser.add_argument("--top-chunks", type=int, default=3, help="How many chunks per technique to retrieve")
     parser.add_argument("--vector-k", type=int, default=25, help="Top K vector chunks")
@@ -331,6 +356,10 @@ def main() -> None:
     args = parser.parse_args()
 
     index_dir = Path(args.index_dir)
+    human_output_dir = Path(args.human_output_dir)
+    machine_output_dir = Path(args.machine_output_dir)
+    human_output_dir.mkdir(parents=True, exist_ok=True)
+    machine_output_dir.mkdir(parents=True, exist_ok=True)
     data = _run_retrieval(
         query=str(args.query),
         index_dir=index_dir,
@@ -344,18 +373,18 @@ def main() -> None:
 
     results = data.get("results") or []
     if not results:
-        print(
-            json.dumps(
-                {
-                    "query": str(args.query),
-                    "top_techniques": [],
-                    "summary": "No retrieval results.",
-                    "alternatives": [],
-                },
-                ensure_ascii=False,
-                indent=2,
-            )
-        )
+        payload = {
+            "query": str(args.query),
+            "top_techniques": [],
+            "summary": "No retrieval results.",
+            "alternatives": [],
+        }
+        output_stem = _timestamped_stem()
+        output_jsonl = machine_output_dir / f"{output_stem}.jsonl"
+        output_json = human_output_dir / f"{output_stem}.json"
+        _write_jsonl_record(output_jsonl, payload)
+        _write_pretty_json(output_json, payload)
+        print(str(output_json))
         return
 
     sources = _fetch_sources(
@@ -408,7 +437,12 @@ def main() -> None:
         }
         if args.debug:
             error_payload["error"]["response_excerpt"] = _truncate_json(response_json)
-        print(json.dumps(error_payload, ensure_ascii=False, indent=2))
+        output_stem = _timestamped_stem()
+        output_jsonl = machine_output_dir / f"{output_stem}.jsonl"
+        output_json = human_output_dir / f"{output_stem}.json"
+        _write_jsonl_record(output_jsonl, error_payload)
+        _write_pretty_json(output_json, error_payload)
+        print(str(output_json))
         return
 
     parsed = _parse_json_response(response_text)
@@ -421,10 +455,20 @@ def main() -> None:
             "alternatives": [],
             "raw_text": raw,
         }
-        print(json.dumps(fallback, ensure_ascii=False, indent=2))
+        output_stem = _timestamped_stem()
+        output_jsonl = machine_output_dir / f"{output_stem}.jsonl"
+        output_json = human_output_dir / f"{output_stem}.json"
+        _write_jsonl_record(output_jsonl, fallback)
+        _write_pretty_json(output_json, fallback)
+        print(str(output_json))
         return
 
-    print(json.dumps(parsed, ensure_ascii=False, indent=2))
+    output_stem = _timestamped_stem()
+    output_jsonl = machine_output_dir / f"{output_stem}.jsonl"
+    output_json = human_output_dir / f"{output_stem}.json"
+    _write_jsonl_record(output_jsonl, parsed)
+    _write_pretty_json(output_json, parsed)
+    print(str(output_json))
 
 
 if __name__ == "__main__":

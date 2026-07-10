@@ -22,6 +22,8 @@ and exposes query, evaluation, sweep, and generation entry points.
 | `data/raw/` | Source inputs, including the MITRE ATT&CK STIX bundle. |
 | `data/processed/` | Derived corpora and intermediate JSONL outputs. |
 | `data/eval/` | Evaluation cases used for retrieval scoring. |
+| `data/human_outs/` | Pretty JSON outputs from `generate_offense_rag.py` for human review. |
+| `data/machine_outs/` | JSONL outputs from `generate_offense_rag.py` for machine ingestion. |
 | `artifacts/offense_index/` | Primary hybrid index artifacts. |
 | `artifacts/offense_index_lex/` | Lexical index artifacts. |
 | `cache/` | Query embedding cache and other transient cache state. |
@@ -36,6 +38,11 @@ and exposes query, evaluation, sweep, and generation entry points.
 - `sweep_offense_retrieval_fast.py` sweeps retrieval parameters efficiently.
 - `generate_offense_rag.py` turns retrieved evidence into a cited RAG response.
 - `hosted_embeddings.py` abstracts the hosted embedding providers.
+
+`generate_offense_rag.py` now emits timestamped outputs to separate locations by default:
+
+- `data/human_outs/<timestamp>.json` for human-friendly review
+- `data/machine_outs/<timestamp>.jsonl` for line-delimited machine processing
 
 ## Canonical References
 

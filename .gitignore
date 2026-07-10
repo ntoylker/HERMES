@@ -15,5 +15,12 @@ __pycache__/
 cache/
 logs/
 
+# OUTPUTS FROM RUNNING THE MODEL
+data/human_outs/
+data/machine_outs/
+data/maachine_outs/
+
 # Original STIX bundle (too large for standard GitHub)
 data/raw/enterprise-attack/
+
+# OUTPUTS FROM RUNNING THE MODEL
