@@ -1,63 +1,16 @@
-### 0. Προετοιμασία Δεδομένων
-1. **Data Ingestion & Chunking**
+# Data Preparation Notes
 
--> `build_offense_corpus.py`
+This file is kept as a legacy reference. The canonical, current instructions live in [OFFENSE_RAG_QUICKSTART.md](OFFENSE_RAG_QUICKSTART.md) and [RETRIEVAL_CONFIG.md](RETRIEVAL_CONFIG.md).
 
-*Το script αυτό λειτουργεί ως μεταφραστής και φίλτρο.*
-- Διαβάζει το ακατέργαστο και ογκώδες `enterprise-attack.json` (το STIX format της MITRE).
-    
-- Απομονώνει μόνο τις επιθετικές τεχνικές (offense-only δεδομένα), αγνοώντας αμυντικά mitigations.
-    
-- Σπάει τα μεγάλα κείμενα σε μικρότερα, διαχειρίσιμα κομμάτια (chunks) ανάλογα με τον τύπο τους (overview, description, procedure examples).
-    
-- Παράγει το αρχείο `rag_offense_mitre_chunks.jsonl`, το οποίο είναι η καθαρή πηγή δεδομένων για το επόμενο βήμα.
+## What the pipeline does
 
-2. **Δημιουργία του Ευρετηρίου (Indexing & Embeddings)**
+1. `build_offense_corpus.py` reads `enterprise-attack/enterprise-attack.json`, filters for offense-only techniques, and writes `rag_offense_mitre_chunks.jsonl`.
+2. `build_offense_index.py` builds `offense_index/offense_index.sqlite`, `offense_index/embeddings.npy`, and `offense_index/index_meta.json` using a hosted embedding provider.
+3. `query_offense_index.py` runs hybrid retrieval over SQLite FTS5 plus vector embeddings and caches query embeddings in `query_cache.sqlite` beside the script.
+4. `generate_offense_rag.py` retrieves supporting chunks and asks Gemini to produce a cited JSON answer.
 
--> `build_offense_index.py`
+## Notes
 
-_(Προαπαιτούμενο: Ο χρήστης πρέπει να έχει ορίσει το `GOOGLE_API_KEY` στο περιβάλλον του)_
-
-Εδώ χτίζεται η **μηχανή αναζήτησης** του συστήματος.
-- Διαβάζει το `rag_offense_mitre_chunks.jsonl` που παράχθηκε στο προηγούμενο βήμα.    
-- Δημιουργεί τη βάση δεδομένων SQLite (`offense_index.sqlite`) και ρυθμίζει το FTS5 για την παραδοσιακή λεκτική αναζήτηση με αλγόριθμο BM25.
-- Καλεί το API της Google (χρησιμοποιώντας σιωπηλά το βοηθητικό αρχείο `hosted_embeddings.py`) για να μετατρέψει κάθε chunk σε διάνυσμα.
-- Αποθηκεύει αυτά τα διανύσματα στο αρχείο `embeddings.npy`.
-- Δημιουργεί τον φάκελο `offense_index/` που περιέχει όλα τα παραπάνω έτοιμα για αναζήτηση.
-
-3. **Δοκιμή Υβριδικής Αναζήτησης (Hybrid Retrieval)**
-
--> `query_offense_index.py`
-
-*Αυτό το βήμα δεν είναι απαραίτητο για το τελικό RAG, αλλά είναι ο τρόπος του χρήστη να ελέγξει ότι το ευρετήριο δουλεύει σωστά.*
-
-- Δέχεται ένα ερώτημα **(query)** σε φυσική γλώσσα από τον χρήστη.
-- Μετατρέπει το ερώτημα σε διάνυσμα. (*API call* gemini-embed)
-- Κάνει αναζήτηση ταυτόχρονα στη **SQLite** (για ακριβείς λέξεις) και στο αρχείο `.npy` (για εννοιολογική ομοιότητα).
-- Υπολογίζει ένα **συνδυαστικό σκορ** (hybrid score) και επιστρέφει τις **επικρατέστερες τεχνικές MITRE**.
-- **On-disk cache**: Αποθηκευει embeddings ερωτηματων σε `query_cache.sqlite` (project root) για να μειωνει τα API calls σε επαναλαμβανομενα queries.
-
-4. **Τελική Παραγωγή Απάντησης (End-to-End RAG)**
-
--> `generate_offense_rag.py`
-
-Αυτή είναι η τελική, ολοκληρωμένη λειτουργία του συστήματος που ενοποιεί όλα τα προηγούμενα.
-
-1. *Δέχεται* την ερώτηση του χρήστη.
-2. Εκτελεί εσωτερικά την υβριδική αναζήτηση (όπως στο βήμα 3) για να βρει τα πιο σχετικά chunks κειμένου    
-3. Εξάγει το πραγματικό κείμενο αυτών των chunks από τη βάση δεδομένων.
-4. **Φτιάχνει ένα τελικό prompt που περιέχει την αρχική ερώτηση και τα σχετικά κείμενα.**
-5. **Το στέλνει στο Gemini 2.5 Pro, ζητώντας του να συνθέσει μια απάντηση.**
-6. *Επιστρέφει* το τελικό JSON που περιέχει την εξήγηση (rationale) και τις ακριβείς παραπομπές (citations) στα chunks που χρησιμοποίησε.
-
-Σημειωση: Το script ζητα JSON output απο το Gemini (responseMimeType=application/json) και εχει ασφαλες parsing για responses με fenced blocks.
-Επισης, το Gemini 2.5 απαιτει thinking mode, οποτε το script βαζει μικρο thinking budget για να μην μηδενιζει τα output tokens.
-
----
-Τα υπόλοιπα αρχεία που δεν εκτελούνται άμεσα σε αυτή τη ροή:
-
-- **`hosted_embeddings.py`**: Είναι βοηθητικό module (wrapper) που χειρίζεται την επικοινωνία με τα APIs των μοντέλων. Εισάγεται (import) και χρησιμοποιείται από τα άλλα scripts, δεν το τρέχει μόνος του ο χρήστης.
-
-- **`eval_offense_retrieval.py`**: Είναι εργαλείο αξιολόγησης. Για να τρέξει, ο χρήστης πρέπει πρώτα να φτιάξει με το χέρι το αρχείο `eval_cases.jsonl` με ερωτήσεις και αναμενόμενες σωστές απαντήσεις.
-
-- **`test.py`**: Παλιότερος κώδικας, μη σχετικός με το τωρινό pipeline.
+- The retrieval defaults are standardized elsewhere in the repo; use [RETRIEVAL_CONFIG.md](RETRIEVAL_CONFIG.md) as the source of truth.
+- `hosted_embeddings.py` is a shared helper module and is not run directly.
+- `eval_offense_retrieval.py` is the batch evaluation entry point for `eval_cases.jsonl`.

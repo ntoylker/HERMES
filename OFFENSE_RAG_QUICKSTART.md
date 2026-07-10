@@ -2,9 +2,11 @@
 
 This workspace contains a small pipeline that:
 
-1) Builds an **offense-only** chunked MITRE ATT&CK JSONL corpus (technique descriptions + procedure examples)
-2) Builds a **hybrid index**: SQLite FTS5 (BM25-ish lexical) + hosted embeddings (vector)
-3) Queries the index and **aggregates hits to the technique level**
+1. Builds an offense-only chunked MITRE ATT&CK JSONL corpus
+2. Builds a hybrid index: SQLite FTS5 plus hosted embeddings
+3. Queries the index and aggregates hits to the technique level
+
+Canonical retrieval config: [RETRIEVAL_CONFIG.md](RETRIEVAL_CONFIG.md)
 
 ## 1) Build the offense-only chunked corpus
 
@@ -20,7 +22,7 @@ Output: `rag_offense_mitre_chunks.jsonl`
 
 Choose one provider.
 
-Note: If you do not set `EMBED_PROVIDER`, the code will auto-detect the provider based on which API key env var you set (Google AI Studio → Azure OpenAI → OpenAI).
+Note: If you do not set `EMBED_PROVIDER`, the code auto-detects the provider based on which API key env var you set, in this order: Google AI Studio → Azure OpenAI → OpenAI.
 
 ### Option A: OpenAI
 
@@ -82,7 +84,9 @@ Tips:
 - Quick/dev run: add `--limit 2000`
 - Lexical-only (no API calls): add `--skip-embeddings`
 
-## 4) Query (hybrid) and aggregate to techniques
+## 4) Query and aggregate to techniques
+
+The repository standard for everyday query/eval/generate runs is `vector_k=25`, `bm25_k=25`, `lexical_weight=0.05`. Those are also the defaults in the code.
 
 ```bash
 ./venv/bin/python query_offense_index.py \
@@ -106,6 +110,8 @@ JSON output:
 ./venv/bin/python query_offense_index.py "..." --json
 ```
 
+The query embedding cache is stored as `query_cache.sqlite` next to `query_offense_index.py`, not inside `offense_index/`.
+
 ## 5) Generate technique links (RAG)
 
 This wraps retrieval + Gemini generation and returns JSON with citations.
@@ -117,7 +123,8 @@ This wraps retrieval + Gemini generation and returns JSON with citations.
 ```
 
 Optional knobs:
-- `--top-techniques`, `--top-chunks`, `--vector-k`, `--bm25-k`, `--lexical-weight`
+- `--top-techniques`, `--top-chunks`
+- `--vector-k`, `--bm25-k`, `--lexical-weight` if you are intentionally deviating from the standard config
 - `--max-sources`, `--max-chars-per-source`
 - `--gen-model`, `--temperature`, `--max-output-tokens`
 
