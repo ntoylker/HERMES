@@ -303,7 +303,7 @@ def _call_gemini_raw(
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate technique links with citations over the offense index")
     parser.add_argument("query", help="User query")
-    parser.add_argument("--index-dir", default="offense_index", help="Index directory")
+    parser.add_argument("--index-dir", default="artifacts/offense_index", help="Index directory")
     parser.add_argument("--top-techniques", type=int, default=8, help="How many techniques to retrieve")
     parser.add_argument("--top-chunks", type=int, default=3, help="How many chunks per technique to retrieve")
     parser.add_argument("--vector-k", type=int, default=25, help="Top K vector chunks")

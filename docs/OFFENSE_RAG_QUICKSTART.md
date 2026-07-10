@@ -8,15 +8,26 @@ This workspace contains a small pipeline that:
 
 Canonical retrieval config: [RETRIEVAL_CONFIG.md](RETRIEVAL_CONFIG.md)
 
+Recommended repo layout:
+
+- [docs/](docs)
+- [data/raw/enterprise-attack/enterprise-attack.json](data/raw/enterprise-attack/enterprise-attack.json)
+- [data/processed/rag_offense_mitre_chunks.jsonl](data/processed/rag_offense_mitre_chunks.jsonl)
+- [data/eval/eval_cases.jsonl](data/eval/eval_cases.jsonl)
+- [artifacts/offense_index/](artifacts/offense_index)
+- [artifacts/offense_index_lex/](artifacts/offense_index_lex)
+- [cache/query_cache.sqlite](cache/query_cache.sqlite)
+- [logs/](logs)
+
 ## 1) Build the offense-only chunked corpus
 
 ```bash
 ./venv/bin/python build_offense_corpus.py \
-  --input enterprise-attack/enterprise-attack.json \
-  --output rag_offense_mitre_chunks.jsonl
+  --input data/raw/enterprise-attack/enterprise-attack.json \
+  --output data/processed/rag_offense_mitre_chunks.jsonl
 ```
 
-Output: `rag_offense_mitre_chunks.jsonl`
+Output: `data/processed/rag_offense_mitre_chunks.jsonl`
 
 ## 2) Configure hosted embeddings
 
@@ -65,14 +76,14 @@ export GEMINI_GEN_MODEL="gemini-2.5-pro"
 ## 3) Build the hybrid index
 
 This creates:
-- `offense_index/offense_index.sqlite` (chunks + FTS)
-- `offense_index/embeddings.npy` (float32, normalized)
-- `offense_index/index_meta.json`
+- `artifacts/offense_index/offense_index.sqlite` (chunks + FTS)
+- `artifacts/offense_index/embeddings.npy` (float32, normalized)
+- `artifacts/offense_index/index_meta.json`
 
 ```bash
 ./venv/bin/python build_offense_index.py \
-  --corpus rag_offense_mitre_chunks.jsonl \
-  --outdir offense_index \
+  --corpus data/processed/rag_offense_mitre_chunks.jsonl \
+  --outdir artifacts/offense_index \
   --overwrite
 ```
 
@@ -91,7 +102,7 @@ The repository standard for everyday query/eval/generate runs is `vector_k=25`, 
 ```bash
 ./venv/bin/python query_offense_index.py \
   "abuse wmi to execute payload remotely" \
-  --index-dir offense_index \
+  --index-dir artifacts/offense_index \
   --top-techniques 10
 ```
 
@@ -100,7 +111,7 @@ Lexical-only (no embeddings required):
 ```bash
 ./venv/bin/python query_offense_index.py \
   "abuse wmi to execute payload remotely" \
-  --index-dir offense_index \
+  --index-dir artifacts/offense_index \
   --lexical-only
 ```
 
@@ -110,7 +121,7 @@ JSON output:
 ./venv/bin/python query_offense_index.py "..." --json
 ```
 
-The query embedding cache is stored as `query_cache.sqlite` next to `query_offense_index.py`, not inside `offense_index/`.
+The query embedding cache is stored as `cache/query_cache.sqlite`, not inside the index directory.
 
 ## 5) Generate technique links (RAG)
 
@@ -119,7 +130,7 @@ This wraps retrieval + Gemini generation and returns JSON with citations.
 ```bash
 ./venv/bin/python generate_offense_rag.py \
   "abuse wmi to execute payload remotely" \
-  --index-dir offense_index
+  --index-dir artifacts/offense_index
 ```
 
 Optional knobs:
@@ -130,7 +141,7 @@ Optional knobs:
 
 ## 6) Evaluate retrieval
 
-Create eval cases in `eval_cases.jsonl` (one JSON object per line):
+Create eval cases in `data/eval/eval_cases.jsonl` (one JSON object per line):
 
 ```json
 {"query": "abuse wmi to execute payload remotely", "expected": ["T1047"]}
@@ -141,15 +152,15 @@ Run evaluation:
 
 ```bash
 ./venv/bin/python eval_offense_retrieval.py \
-  --cases eval_cases.jsonl \
-  --index-dir offense_index
+  --cases data/eval/eval_cases.jsonl \
+  --index-dir artifacts/offense_index
 ```
 
 Lexical-only baseline:
 
 ```bash
 ./venv/bin/python eval_offense_retrieval.py \
-  --cases eval_cases.jsonl \
-  --index-dir offense_index \
+  --cases data/eval/eval_cases.jsonl \
+  --index-dir artifacts/offense_index \
   --lexical-only
 ```

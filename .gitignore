@@ -9,6 +9,11 @@ __pycache__/
 *.sqlite-wal
 *.npy
 *.jsonl
+!data/eval/eval_cases.jsonl
+
+# Generated runtime folders
+cache/
+logs/
 
 # Original STIX bundle (too large for standard GitHub)
-enterprise-attack/
+data/raw/enterprise-attack/

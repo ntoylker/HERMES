@@ -318,12 +318,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Build hybrid (FTS5+embeddings) index for offense-only MITRE chunks")
     parser.add_argument(
         "--corpus",
-        default="rag_offense_mitre_chunks.jsonl",
+        default="data/processed/rag_offense_mitre_chunks.jsonl",
         help="Input JSONL corpus (from build_offense_corpus.py)",
     )
     parser.add_argument(
         "--outdir",
-        default="offense_index",
+        default="artifacts/offense_index",
         help="Output directory for SQLite + embeddings",
     )
 

@@ -198,12 +198,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Build offense-only, chunked MITRE ATT&CK JSONL for RAG.")
     parser.add_argument(
         "--input",
-        default="enterprise-attack/enterprise-attack.json",
+        default="data/raw/enterprise-attack/enterprise-attack.json",
         help="Path to the MITRE ATT&CK Enterprise STIX bundle (enterprise-attack.json)",
     )
     parser.add_argument(
         "--output",
-        default="rag_offense_mitre_chunks.jsonl",
+        default="data/processed/rag_offense_mitre_chunks.jsonl",
         help="Output JSONL path",
     )
 

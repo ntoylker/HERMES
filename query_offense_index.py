@@ -45,10 +45,11 @@ def _normalize_query(query: str) -> str:
 
 
 def _cache_db_path() -> Path:
-    return Path(__file__).resolve().parent / CACHE_DB_FILENAME
+    return Path(__file__).resolve().parent / "cache" / CACHE_DB_FILENAME
 
 
 def _cache_connect(path: Path) -> sqlite3.Connection:
+    path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(path))
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
@@ -335,7 +336,7 @@ def query_index(
 def main() -> None:
     parser = argparse.ArgumentParser(description="Hybrid query over offense-only MITRE chunk index")
     parser.add_argument("query", help="Natural language query")
-    parser.add_argument("--index-dir", default="offense_index", help="Index directory created by build_offense_index.py")
+    parser.add_argument("--index-dir", default="artifacts/offense_index", help="Index directory created by build_offense_index.py")
     parser.add_argument("--vector-k", type=int, default=25, help="Top K vector chunks")
     parser.add_argument("--bm25-k", type=int, default=25, help="Top K lexical chunks")
     parser.add_argument("--lexical-weight", type=float, default=0.05, help="Weight for lexical rank score")

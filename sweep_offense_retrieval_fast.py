@@ -197,8 +197,8 @@ def _aggregate_predictions(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Fast parameter sweep for offense retrieval")
-    parser.add_argument("--cases", default="eval_cases.jsonl", help="JSONL eval cases file")
-    parser.add_argument("--index-dir", default="offense_index", help="Index directory")
+    parser.add_argument("--cases", default="data/eval/eval_cases.jsonl", help="JSONL eval cases file")
+    parser.add_argument("--index-dir", default="artifacts/offense_index", help="Index directory")
     parser.add_argument("--vector-ks", default="25", help="Comma-separated vector_k values")
     parser.add_argument("--bm25-ks", default="25", help="Comma-separated bm25_k values")
     parser.add_argument("--lexical-weights", default="0.05", help="Comma-separated lexical weights")

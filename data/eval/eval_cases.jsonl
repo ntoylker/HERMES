@@ -1,0 +1,13 @@
+{"query": "compress and encrypt stolen files using winrar or 7-zip before exfiltration",                    "expected": ["T1560.001"]}
+{"query": "intercept user keystrokes using API hooks to steal plaintext credentials",                       "expected": ["T1056.001"]}
+{"query": "use a custom-built keylogger to capture user input and exfiltrate it to a remote server",        "expected": ["T1056.001", "T1041"]}
+{"query": "exploit a vulnerability in a web application to gain unauthorized access to sensitive data",     "expected": ["T1190"]}
+{"query": "use a phishing email to trick a user into revealing their login credentials",                    "expected": ["T1598", "T1566"]}
+{"query": "deploy ransomware to encrypt files on the victim's system and demand payment for decryption",    "expected": ["T1486"]}
+{"query": "use a remote access Trojan (RAT) to maintain persistent access to a compromised system",         "expected": ["T1219"]}
+{"query": "exfiltrate data by embedding it in DNS queries to avoid detection",                              "expected": ["T1071.004", "T1048"]}
+{"query": "use a USB drive to manually transfer stolen data from an air-gapped system",                     "expected": ["T1052.001"]}
+{"query": "exploit a zero-day vulnerability in an operating system to gain elevated privileges",            "expected": ["T1068"]}
+{"query": "use a watering hole attack to compromise a website frequently visited by the target organization", "expected": ["T1189"]}
+{"query": "use a supply chain attack to compromise software used by the target organization",               "expected": ["T1195.002"]}
+{"query": "use a brute-force attack to guess weak passwords and gain unauthorized access",                  "expected": ["T1110.001"]}

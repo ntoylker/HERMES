@@ -84,8 +84,8 @@ def _reciprocal_rank(pred: list[str], gold: set[str]) -> float:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Evaluate hybrid retrieval for offense index")
-    parser.add_argument("--cases", default="eval_cases.jsonl", help="JSONL eval cases file")
-    parser.add_argument("--index-dir", default="offense_index", help="Index directory")
+    parser.add_argument("--cases", default="data/eval/eval_cases.jsonl", help="JSONL eval cases file")
+    parser.add_argument("--index-dir", default="artifacts/offense_index", help="Index directory")
     parser.add_argument("--k", type=int, default=10, help="Recall@K")
     parser.add_argument("--top-techniques", type=int, default=20, help="How many techniques to retrieve")
     parser.add_argument("--vector-k", type=int, default=25, help="Top K vector chunks")
