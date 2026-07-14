@@ -23,6 +23,12 @@ Recommended repo layout:
 
 ## 1) Build the offense-only chunked corpus
 
+If you only want to run the corpus-building stage, install the minimal dependency set first:
+
+```bash
+python -m pip install -r requirements-offense-corpus.txt
+```
+
 ```bash
 ./venv/bin/python build_offense_corpus.py \
   --input data/raw/enterprise-attack/enterprise-attack.json \

@@ -313,7 +313,7 @@ def query_index(
     results = results[: max(1, int(top_techniques))]
 
     if output_json:
-        print(json.dumps({"query": query, "results": results}, ensure_ascii=False, indent=2))
+        print(json.dumps({"query": query, "results": results}, ensure_ascii=True, indent=2))
         return
 
     for i, r in enumerate(results, start=1):

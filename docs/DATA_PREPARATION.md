@@ -13,4 +13,4 @@ This file is kept as a legacy reference. The canonical, current instructions liv
 
 - The retrieval defaults are standardized elsewhere in the repo; use [RETRIEVAL_CONFIG.md](RETRIEVAL_CONFIG.md) as the source of truth.
 - `hosted_embeddings.py` is a shared helper module and is not run directly.
-- `eval_offense_retrieval.py` is the batch evaluation entry point for `data/eval/eval_cases.jsonl`.
+- `eval_offense_retrieval.py` is the batch evaluation entry point for `data/eval/eval_cases.jsonl`. -> If you encounter any problems with unicode format or anything relevant, go to line `query_offense_index.py:316` and change `ensure_ascii=True` to `False` or otherwise.

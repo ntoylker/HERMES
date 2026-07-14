@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from mitreattack.stix20 import MitreAttackData
 
 
+
 def _is_blank(value) -> bool:
     if value is None:
         return True
