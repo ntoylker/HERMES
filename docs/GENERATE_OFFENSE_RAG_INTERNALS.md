@@ -256,5 +256,10 @@ Use `--debug` when investigating model-returned empty text.
 
 - Operational quickstart: [OFFENSE_RAG_QUICKSTART.md](OFFENSE_RAG_QUICKSTART.md)
 - Canonical retrieval defaults: [RETRIEVAL_CONFIG.md](RETRIEVAL_CONFIG.md)
+- Stage 2 planning contract: [STAGE2_PLANNER.md](STAGE2_PLANNER.md)
 
 This file is the implementation deep dive for section "5) Generate technique links (RAG)" in [OFFENSE_RAG_QUICKSTART.md](OFFENSE_RAG_QUICKSTART.md).
+
+## 10) Stage 2 Handoff
+
+The pretty JSON written to `data/human_outs/<timestamp>.json` is the direct input to `plan_tasks.py`. Stage 2 uses `query` and `top_techniques` as its required planning inputs; it can include `alternatives` only when explicitly requested. Stage 2 does not use the generated `S1`, `S2`, citation labels as persistent identifiers. Instead, it resolves each selected technique against the SQLite index and records durable `chunk_id` references in the task plan.

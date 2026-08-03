@@ -1,9 +1,10 @@
 # HERMES MVP: Offense-Only MITRE ATT&CK RAG
 
-This repository contains an offense-focused MITRE ATT&CK retrieval pipeline.
-It ingests the ATT&CK STIX bundle, builds an offense-only chunked corpus,
-creates a hybrid retrieval index with lexical FTS5 plus hosted embeddings,
-and exposes query, evaluation, sweep, and generation entry points.
+This repository contains a MITRE ATT&CK retrieval and planning pipeline.
+Stage 1 ingests the ATT&CK STIX bundle, builds an offense-only chunked corpus,
+creates a hybrid retrieval index with lexical FTS5 plus hosted embeddings, and
+links an abstract query to ATT&CK techniques. Stage 2 converts those linked
+techniques into an evidence-grounded task plan for a later coding stage.
 
 ## What Has Been Done
 
@@ -24,6 +25,9 @@ and exposes query, evaluation, sweep, and generation entry points.
 | `data/eval/` | Evaluation cases used for retrieval scoring. |
 | `data/human_outs/` | Pretty JSON outputs from `generate_offense_rag.py` for human review. |
 | `data/machine_outs/` | JSONL outputs from `generate_offense_rag.py` for machine ingestion. |
+| `data/config/stage2_constraints.json` | Deterministic policy and scope for Stage 2 planning. |
+| `data/patterns/code_patterns.jsonl` | Vetted, ATT&CK-mapped pattern records used as planner context. |
+| `data/plans/` | Stage 2 human-readable plans, machine-readable plans, and saved planning contexts. |
 | `artifacts/offense_index/` | Primary hybrid index artifacts. |
 | `artifacts/offense_index_lex/` | Lexical index artifacts. |
 | `cache/` | Query embedding cache and other transient cache state. |
@@ -37,6 +41,7 @@ and exposes query, evaluation, sweep, and generation entry points.
 - `eval_offense_retrieval.py` evaluates retrieval quality on the fixed cases.
 - `sweep_offense_retrieval_fast.py` sweeps retrieval parameters efficiently.
 - `generate_offense_rag.py` turns retrieved evidence into a cited RAG response.
+- `plan_tasks.py` turns a Stage 1 RAG response into a validated, dependency-ordered task plan.
 - `hosted_embeddings.py` abstracts the hosted embedding providers.
 
 `generate_offense_rag.py` now emits timestamped outputs to separate locations by default:
@@ -49,6 +54,7 @@ and exposes query, evaluation, sweep, and generation entry points.
 - [Quickstart](docs/OFFENSE_RAG_QUICKSTART.md)
 - [Retrieval Config](docs/RETRIEVAL_CONFIG.md)
 - [Data Preparation Notes](docs/DATA_PREPARATION.md)
+- [Stage 2 Planner](docs/STAGE2_PLANNER.md)
 
 ## Current Standard
 

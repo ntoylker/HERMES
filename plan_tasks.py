@@ -1,3 +1,9 @@
+"""Stage 2 planner: convert Stage 1 ATT&CK links into validated coding-task plans.
+
+The LLM proposes task structure; this module supplies local evidence and patterns,
+then deterministically validates, orders, and persists the canonical plan.
+"""
+
 import argparse
 import json
 import os
@@ -67,6 +73,7 @@ def _try_parse_json(text: str) -> dict | None:
 
 
 def _parse_json_response(text: str) -> dict | None:
+    # Recover JSON when a model wraps an otherwise valid response in prose or fences.
     parsed = _try_parse_json(text)
     if parsed is not None:
         return parsed
@@ -171,12 +178,14 @@ def _fetch_attack_evidence(db_path: Path, mitre_id: str, limit: int, max_chars: 
     if not db_path.exists():
         raise RuntimeError(f"Missing index database: {db_path}")
 
+    # The planner only reads the Stage 1 index; it never modifies retrieval artifacts.
     conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     try:
         rows = conn.execute(
             """
             SELECT chunk_id, chunk_type, text FROM chunks
             WHERE mitre_id = ?
+            -- Prefer concise technique definitions before procedure examples.
             ORDER BY CASE chunk_type
                 WHEN 'technique_description' THEN 0
                 WHEN 'technique_overview' THEN 1
@@ -206,6 +215,7 @@ def _load_pattern_library(path: Path) -> list[dict]:
 
 
 def _retrieve_patterns(patterns: list[dict], mitre_id: str, limit: int) -> list[dict]:
+    # Exact ATT&CK matching keeps planner patterns traceable to their techniques.
     matches = [p for p in patterns if mitre_id in (p.get("techniques") or [])]
     return matches[:limit]
 
@@ -255,6 +265,7 @@ def _build_planning_context(
     evidence_per_technique: int,
     patterns_per_technique: int,
 ) -> dict:
+    # Preserve Stage 1 ranking order for primary techniques.
     primary = [
         _build_technique_context(
             mitre_id=t["mitre_id"],
@@ -349,6 +360,7 @@ def _build_prompt(context: dict, repair_notes: list[str] | None) -> str:
 
 
 def _topo_order(local_ids: list[str], edges: dict[str, list[str]]) -> tuple[list[str] | None, bool]:
+    # Depth-first traversal returns dependencies before the tasks that require them.
     visited: dict[str, int] = {}
     order: list[str] = []
 
@@ -393,6 +405,7 @@ def _validate_and_normalize(draft: dict, context: dict) -> tuple[dict | None, bo
             valid_chunk_ids |= {e["chunk_id"] for e in t["evidence"]}
             valid_pattern_ids |= {p["pattern_id"] for p in t["patterns"]}
 
+            # Accept evidence references only from the context supplied to the model.
     raw_tasks = draft.get("tasks")
     if not isinstance(raw_tasks, list) or not raw_tasks:
         return None, False, ["no_tasks_returned"], []
@@ -461,6 +474,7 @@ def _validate_and_normalize(draft: dict, context: dict) -> tuple[dict | None, bo
     if has_cycle or order is None:
         return None, False, ["dependency_cycle"], advisories
 
+    # The model's local IDs become stable IDs only after the dependency graph is valid.
     canonical_map = {lid: f"TASK-{i:03d}" for i, lid in enumerate(order, start=1)}
     tasks_out = []
     coverage: dict[str, list[str]] = {}
@@ -476,6 +490,7 @@ def _validate_and_normalize(draft: dict, context: dict) -> tuple[dict | None, bo
         chunk_refs = [c for c in (given_refs.get("attack_chunks") or []) if c in valid_chunk_ids]
         pattern_refs = [p for p in (given_refs.get("patterns") or []) if p in valid_pattern_ids]
         if not chunk_refs and not pattern_refs and maps_to:
+            # Retain a minimal traceable reference when the model omitted valid citations.
             primary_mid = maps_to[0]
             chunk_refs = [e["chunk_id"] for e in evidence_by_tech.get(primary_mid, [])[:1]]
             pattern_refs = [p["pattern_id"] for p in pattern_by_tech.get(primary_mid, [])[:1]]
@@ -578,6 +593,7 @@ def main() -> None:
         evidence_per_technique=int(args.evidence_per_technique),
         patterns_per_technique=int(args.patterns_per_technique),
     )
+    # Persist the exact grounded context used for this plan for reproducibility.
     _write_pretty_json(machine_output_dir / f"{stem}.input.json", context)
 
     api_key = _env("GOOGLE_API_KEY") or _env("GEMINI_API_KEY")
@@ -622,6 +638,7 @@ def main() -> None:
         if valid:
             break
 
+    # Always emit a machine-readable result, including an invalid plan and its violations.
     planning_status = "valid" if valid else "invalid"
     final_plan = {
         "schema_version": "1.0",

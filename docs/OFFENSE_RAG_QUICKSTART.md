@@ -5,21 +5,25 @@ This workspace contains a small pipeline that:
 1. Builds an offense-only chunked MITRE ATT&CK JSONL corpus
 2. Builds a hybrid index: SQLite FTS5 plus hosted embeddings
 3. Queries the index and aggregates hits to the technique level
+4. Generates cited Stage 1 technique links and turns them into a Stage 2 task plan
 
 Canonical retrieval config: [RETRIEVAL_CONFIG.md](RETRIEVAL_CONFIG.md)
 
 Recommended repo layout:
 
-- [docs/](docs)
-- [data/raw/enterprise-attack/enterprise-attack.json](data/raw/enterprise-attack/enterprise-attack.json)
-- [data/processed/rag_offense_mitre_chunks.jsonl](data/processed/rag_offense_mitre_chunks.jsonl)
-- [data/eval/eval_cases.jsonl](data/eval/eval_cases.jsonl)
-- [data/human_outs/](data/human_outs)
-- [data/machine_outs/](data/machine_outs)
-- [artifacts/offense_index/](artifacts/offense_index)
-- [artifacts/offense_index_lex/](artifacts/offense_index_lex)
-- [cache/query_cache.sqlite](cache/query_cache.sqlite)
-- [logs/](logs)
+- [docs/](.)
+- [data/raw/enterprise-attack/enterprise-attack.json](../data/raw/enterprise-attack/enterprise-attack.json)
+- [data/processed/rag_offense_mitre_chunks.jsonl](../data/processed/rag_offense_mitre_chunks.jsonl)
+- [data/eval/eval_cases.jsonl](../data/eval/eval_cases.jsonl)
+- [data/human_outs/](../data/human_outs)
+- [data/machine_outs/](../data/machine_outs)
+- [data/config/stage2_constraints.json](../data/config/stage2_constraints.json)
+- [data/patterns/code_patterns.jsonl](../data/patterns/code_patterns.jsonl)
+- [data/plans/](../data/plans)
+- [artifacts/offense_index/](../artifacts/offense_index)
+- [artifacts/offense_index_lex/](../artifacts/offense_index_lex)
+- [cache/query_cache.sqlite](../cache/query_cache.sqlite)
+- [logs/](../logs)
 
 ## 1) Build the offense-only chunked corpus
 
@@ -155,7 +159,25 @@ Optional knobs:
 
 The `.json` file is the human-friendly view; the `.jsonl` file is the machine-friendly line-delimited artifact.
 
-## 6) Evaluate retrieval
+## 6) Build a Stage 2 task plan
+
+`plan_tasks.py` takes the Stage 1 pretty JSON output and produces a dependency-ordered task plan. It enriches each technique with durable ATT&CK chunk references from the SQLite index, exact ATT&CK-ID pattern matches from `data/patterns/code_patterns.jsonl`, and constraints from `data/config/stage2_constraints.json`.
+
+```bash
+./venv/bin/python plan_tasks.py \
+  data/human_outs/<stage1-timestamp>.json \
+  --index-dir artifacts/offense_index
+```
+
+The planner writes:
+
+- `data/plans/human_outs/<timestamp>.json`: formatted plan
+- `data/plans/machine_outs/<timestamp>.jsonl`: machine-readable plan
+- `data/plans/machine_outs/<timestamp>.input.json`: persisted planning context
+
+Use `--include-alternatives` to include Stage 1 alternatives as optional context. Primary Stage 1 techniques remain the required coverage set. See [STAGE2_PLANNER.md](STAGE2_PLANNER.md) for the full input, validation, and output contract.
+
+## 7) Evaluate retrieval
 
 Create eval cases in `data/eval/eval_cases.jsonl` (one JSON object per line):
 

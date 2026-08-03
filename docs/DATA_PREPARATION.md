@@ -1,6 +1,6 @@
 # Data Preparation Notes
 
-This file is kept as a legacy reference. The canonical, current instructions live in [OFFENSE_RAG_QUICKSTART.md](OFFENSE_RAG_QUICKSTART.md) and [RETRIEVAL_CONFIG.md](RETRIEVAL_CONFIG.md).
+This file is kept as a legacy reference. The canonical, current instructions live in [OFFENSE_RAG_QUICKSTART.md](OFFENSE_RAG_QUICKSTART.md), [RETRIEVAL_CONFIG.md](RETRIEVAL_CONFIG.md), and [STAGE2_PLANNER.md](STAGE2_PLANNER.md).
 
 ## What the pipeline does
 
@@ -8,6 +8,7 @@ This file is kept as a legacy reference. The canonical, current instructions liv
 2. `build_offense_index.py` builds `artifacts/offense_index/offense_index.sqlite`, `artifacts/offense_index/embeddings.npy`, and `artifacts/offense_index/index_meta.json` using a hosted embedding provider.
 3. `query_offense_index.py` runs hybrid retrieval over SQLite FTS5 plus vector embeddings and caches query embeddings in `cache/query_cache.sqlite`.
 4. `generate_offense_rag.py` retrieves supporting chunks, asks Gemini to produce a cited answer, and writes outputs to `data/human_outs/<timestamp>.json` and `data/machine_outs/<timestamp>.jsonl`.
+5. `plan_tasks.py` reads the Stage 1 pretty JSON output, resolves durable ATT&CK evidence and local pattern records, then writes a validated task plan under `data/plans/`.
 
 ## Notes
 
