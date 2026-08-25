@@ -16,6 +16,10 @@ cache/
 logs/
 data/
 
+!data/plans/
+!data/patterns/
+!data/config/
+
 # Original STIX bundle (too large for standard GitHub)
 data/raw/enterprise-attack/
 
