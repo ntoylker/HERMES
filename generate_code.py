@@ -70,6 +70,15 @@ def _sanitize_filename(raw: str | None) -> str | None:
     return name if FILENAME_RE.match(name) else None
 
 
+def _strip_redundant_task_prefix(filename: str, task_id_safe: str) -> str:
+    # Models sometimes echo the task ID into their own filename choice; drop that duplicate.
+    stem, suffix = filename[:-3], filename[-3:]
+    prefix = f"{task_id_safe}_"
+    if stem.lower().startswith(prefix.lower()):
+        stem = stem[len(prefix):]
+    return f"{stem}{suffix}" if stem else filename
+
+
 def _parse_response(text: str) -> tuple[str, str]:
     match = FILENAME_LINE_RE.search(text)
     if not match:
@@ -93,8 +102,36 @@ def _parse_response(text: str) -> tuple[str, str]:
     return filename, code
 
 
+class _FunctionBodyStubber(ast.NodeTransformer):
+    """Replaces function/method bodies with their docstring + `...`, keeping signatures intact."""
+
+    def _stub(self, node):
+        docstring = ast.get_docstring(node, clean=False)
+        new_body = [node.body[0]] if docstring is not None else []
+        new_body.append(ast.Expr(value=ast.Constant(value=Ellipsis)))
+        node.body = new_body
+        return node
+
+    def visit_FunctionDef(self, node):
+        return self._stub(node)
+
+    def visit_AsyncFunctionDef(self, node):
+        return self._stub(node)
+
+
+def _compact_dependency_code(code: str) -> str:
+    # Keeps signatures/docstrings/class fields for prompt context; drops implementation bodies to save tokens.
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return code
+    stubbed = _FunctionBodyStubber().visit(tree)
+    ast.fix_missing_locations(stubbed)
+    return ast.unparse(stubbed)
+
+
 def _build_task_prompt(task: dict, generated: dict[str, dict]) -> str:
-    # Show already-generated dependency code so field/function names stay consistent across files.
+    # Show dependency interfaces (bodies stubbed) so field/function names stay consistent across files.
     dep_sections = []
     for dep_id in task.get("depends_on") or []:
         dep = generated.get(dep_id)
@@ -102,7 +139,8 @@ def _build_task_prompt(task: dict, generated: dict[str, dict]) -> str:
             continue
         module_stem = Path(dep["filename"]).stem
         dep_sections.append(
-            f"--- Dependency {dep_id}, module `{module_stem}` (file {dep['filename']}) ---\n{dep['code']}"
+            f"--- Dependency {dep_id}, module `{module_stem}` (file {dep['filename']}) ---\n"
+            f"{_compact_dependency_code(dep['code'])}"
         )
 
     lines = [
@@ -132,8 +170,9 @@ def _build_task_prompt(task: dict, generated: dict[str, dict]) -> str:
     if dep_sections:
         lines += [
             "",
-            "Code already generated for this task's dependencies. Reuse the same field/function names "
-            "for consistency; import from these modules by their stem name if useful:",
+            "Interfaces already generated for this task's dependencies (bodies omitted below; the real "
+            "implementation already exists in these files). Reuse the same field/function names and "
+            "signatures for consistency; import from these modules by their stem name if useful:",
             *dep_sections,
         ]
 
@@ -148,7 +187,20 @@ def _append_repair_note(prompt: str, reason: str) -> str:
     )
 
 
-def _call_ollama(*, prompt: str, model: str, base_url: str, timeout: int) -> str:
+def _extract_diagnostics(payload: dict) -> dict:
+    # Ollama reports durations in nanoseconds; convert to seconds for readability in the manifest.
+    ns = 1_000_000_000
+    return {
+        "prompt_eval_count": payload.get("prompt_eval_count"),
+        "eval_count": payload.get("eval_count"),
+        "total_duration_s": (payload.get("total_duration") or 0) / ns,
+        "load_duration_s": (payload.get("load_duration") or 0) / ns,
+        "prompt_eval_duration_s": (payload.get("prompt_eval_duration") or 0) / ns,
+        "eval_duration_s": (payload.get("eval_duration") or 0) / ns,
+    }
+
+
+def _call_ollama(*, prompt: str, model: str, base_url: str, timeout: int, num_ctx: int) -> tuple[str, dict]:
     try:
         resp = requests.post(
             f"{base_url.rstrip('/')}/api/chat",
@@ -156,6 +208,7 @@ def _call_ollama(*, prompt: str, model: str, base_url: str, timeout: int) -> str
                 "model": model,
                 "messages": [{"role": "user", "content": prompt}],
                 "stream": False,
+                "options": {"num_ctx": num_ctx},
             },
             timeout=timeout,
         )
@@ -163,7 +216,8 @@ def _call_ollama(*, prompt: str, model: str, base_url: str, timeout: int) -> str
         # Unreachable Ollama affects every remaining task identically; abort instead of retrying per-task.
         raise RuntimeError(f"Could not reach Ollama at {base_url} ({exc})") from exc
     resp.raise_for_status()
-    return resp.json()["message"]["content"]
+    payload = resp.json()
+    return payload["message"]["content"], _extract_diagnostics(payload)
 
 
 def _generate_task(
@@ -174,25 +228,30 @@ def _generate_task(
     base_url: str,
     timeout: int,
     max_attempts: int,
-) -> tuple[str | None, str | None, int, str | None]:
+    num_ctx: int,
+) -> tuple[str | None, str | None, int, str | None, dict | None]:
     prompt = _build_task_prompt(task, generated)
     last_error: str | None = None
+    last_diagnostics: dict | None = None
 
     for attempt in range(1, max_attempts + 1):
         attempt_prompt = _append_repair_note(prompt, last_error) if last_error else prompt
         try:
-            text = _call_ollama(prompt=attempt_prompt, model=model, base_url=base_url, timeout=timeout)
+            text, last_diagnostics = _call_ollama(
+                prompt=attempt_prompt, model=model, base_url=base_url, timeout=timeout, num_ctx=num_ctx
+            )
         except requests.RequestException as exc:
             last_error = f"model request failed: {exc}"
+            last_diagnostics = None
             continue
 
         try:
             filename, code = _parse_response(text)
-            return filename, code, attempt, None
+            return filename, code, attempt, None, last_diagnostics
         except ValueError as exc:
             last_error = str(exc)
 
-    return None, None, max_attempts, last_error
+    return None, None, max_attempts, last_error, last_diagnostics
 
 
 def main() -> None:
@@ -206,6 +265,7 @@ def main() -> None:
     parser.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR, help="Directory for generated .py files and manifest.jsonl")
     parser.add_argument("--max-attempts", type=int, default=2, help="Attempts per task before skipping it")
     parser.add_argument("--force", action="store_true", help="Regenerate every task even if already present in the manifest")
+    parser.add_argument("--num-ctx", type=int, default=8192, help="Ollama context window size (options.num_ctx)")
     args = parser.parse_args()
 
     plan_path = Path(args.stage2_plan)
@@ -242,13 +302,14 @@ def main() -> None:
 
         print(f"[{task_id}] generating: {task.get('title')}")
         try:
-            filename, code, attempts, error = _generate_task(
+            filename, code, attempts, error, diagnostics = _generate_task(
                 task=task,
                 generated=generated,
                 model=args.model,
                 base_url=args.base_url,
                 timeout=args.timeout,
                 max_attempts=args.max_attempts,
+                num_ctx=args.num_ctx,
             )
         except RuntimeError as exc:
             print(f"\nAborting: {exc}", file=sys.stderr)
@@ -267,6 +328,7 @@ def main() -> None:
             "status": "failed",
             "attempts": attempts,
             "error": error,
+            "diagnostics": diagnostics,
             "timestamp": timestamp,
         }
 
@@ -278,6 +340,7 @@ def main() -> None:
 
         # Task ID becomes the filename prefix; sanitize it too since plan files can be hand-edited.
         task_id_safe = re.sub(r"[^A-Za-z0-9_]", "_", task_id)
+        filename = _strip_redundant_task_prefix(filename, task_id_safe)
         out_name = f"{task_id_safe}_{filename}"
         out_path = output_dir / out_name
         out_path.write_text(code + "\n", encoding="utf-8")
