@@ -4,7 +4,8 @@ This repository contains a MITRE ATT&CK retrieval and planning pipeline.
 Stage 1 ingests the ATT&CK STIX bundle, builds an offense-only chunked corpus,
 creates a hybrid retrieval index with lexical FTS5 plus hosted embeddings, and
 links an abstract query to ATT&CK techniques. Stage 2 converts those linked
-techniques into an evidence-grounded task plan for a later coding stage.
+techniques into an evidence-grounded task plan. Stage 3 generates one Python
+file per plan task via a local Ollama model.
 
 ## What Has Been Done
 
@@ -28,6 +29,7 @@ techniques into an evidence-grounded task plan for a later coding stage.
 | `data/config/stage2_constraints.json` | Deterministic policy and scope for Stage 2 planning. |
 | `data/patterns/code_patterns.jsonl` | Vetted, ATT&CK-mapped pattern records used as planner context. |
 | `data/plans/` | Stage 2 human-readable plans, machine-readable plans, and saved planning contexts. |
+| `data/code_scripts/` | Stage 3 generated per-task Python files and `manifest.jsonl`. |
 | `artifacts/offense_index/` | Primary hybrid index artifacts. |
 | `artifacts/offense_index_lex/` | Lexical index artifacts. |
 | `cache/` | Query embedding cache and other transient cache state. |
@@ -42,6 +44,7 @@ techniques into an evidence-grounded task plan for a later coding stage.
 - `sweep_offense_retrieval_fast.py` sweeps retrieval parameters efficiently.
 - `generate_offense_rag.py` turns retrieved evidence into a cited RAG response.
 - `plan_tasks.py` turns a Stage 1 RAG response into a validated, dependency-ordered task plan.
+- `generate_code.py` turns a Stage 2 task plan into per-task Python files via a local Ollama model.
 - `hosted_embeddings.py` abstracts the hosted embedding providers.
 
 `generate_offense_rag.py` now emits timestamped outputs to separate locations by default:
@@ -55,6 +58,7 @@ techniques into an evidence-grounded task plan for a later coding stage.
 - [Retrieval Config](docs/RETRIEVAL_CONFIG.md)
 - [Data Preparation Notes](docs/DATA_PREPARATION.md)
 - [Stage 2 Planner](docs/STAGE2_PLANNER.md)
+- [Stage 3 Code Generation](docs/STAGE3_CODE_GENERATION.md)
 
 ## Current Standard
 

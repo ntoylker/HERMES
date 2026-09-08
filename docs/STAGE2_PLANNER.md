@@ -86,3 +86,6 @@ An invalid plan is still persisted with an empty task list, `uncovered` primary 
 ## Relationship to Stage 1
 
 Stage 1 answers which ATT&CK techniques describe a query. Stage 2 uses those techniques as the required coverage set and produces a structured task plan with durable evidence references. The planner does not rerank retrieval results or modify the Stage 1 result.
+
+## Relationship to Stage 3
+Stage 3 ([STAGE3_CODE_GENERATION.md](STAGE3_CODE_GENERATION.md)) consumes a valid Stage 2 plan and generates one Python file per task.

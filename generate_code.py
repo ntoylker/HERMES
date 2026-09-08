@@ -22,10 +22,11 @@ MANIFEST_NAME = "manifest.jsonl"
 
 FILENAME_RE = re.compile(r"^[A-Za-z0-9_]+\.py$")
 FILENAME_LINE_RE = re.compile(r"FILENAME:\s*(\S+)", re.IGNORECASE)
-FENCE_RE = re.compile(r"```[^\n]*\n(.*?)```", re.DOTALL)
+FENCE_RE = re.compile(r"```[^\n]*\n(.*?)```", re.DOTALL)  # first fenced block only
 
 
 def _load_plan(path: Path) -> dict:
+    # Only a validator-approved Stage 2 plan is safe to turn into code.
     if not path.exists():
         raise RuntimeError(f"Missing Stage 2 plan file: {path}")
     plan = json.loads(path.read_text(encoding="utf-8"))
@@ -37,6 +38,7 @@ def _load_plan(path: Path) -> dict:
 
 
 def _write_jsonl_record(path: Path, payload: dict) -> None:
+    # Append-only manifest: one outcome record per generation attempt, never rewritten in place.
     with path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(payload, ensure_ascii=False) + "\n")
 
@@ -61,6 +63,7 @@ def _load_latest_manifest_records(manifest_path: Path) -> dict[str, dict]:
 
 
 def _sanitize_filename(raw: str | None) -> str | None:
+    # Strip quoting/paths the model may add, then require a plain flat `name.py`.
     if not raw:
         return None
     name = raw.strip().strip("`").strip("'\"")
@@ -80,6 +83,7 @@ def _strip_redundant_task_prefix(filename: str, task_id_safe: str) -> str:
 
 
 def _parse_response(text: str) -> tuple[str, str]:
+    # Enforce the required reply shape: a FILENAME line, one fenced block, and syntactically valid code.
     match = FILENAME_LINE_RE.search(text)
     if not match:
         raise ValueError("response is missing a 'FILENAME: <name>.py' line")
@@ -131,6 +135,7 @@ def _compact_dependency_code(code: str) -> str:
 
 
 def _build_task_prompt(task: dict, generated: dict[str, dict]) -> str:
+    # Assembles the single-shot prompt for one task: sandbox rules, response format, task spec, dependency interfaces.
     # Show dependency interfaces (bodies stubbed) so field/function names stay consistent across files.
     dep_sections = []
     for dep_id in task.get("depends_on") or []:
@@ -180,6 +185,7 @@ def _build_task_prompt(task: dict, generated: dict[str, dict]) -> str:
 
 
 def _append_repair_note(prompt: str, reason: str) -> str:
+    # Retry prompt: same task spec plus why the last attempt was rejected.
     return (
         f"{prompt}\n\n"
         f"Your previous response was rejected: {reason}\n"
@@ -201,6 +207,7 @@ def _extract_diagnostics(payload: dict) -> dict:
 
 
 def _call_ollama(*, prompt: str, model: str, base_url: str, timeout: int, num_ctx: int) -> tuple[str, dict]:
+    # Single non-streaming chat call to the local Ollama server for one task attempt.
     try:
         resp = requests.post(
             f"{base_url.rstrip('/')}/api/chat",
@@ -230,6 +237,7 @@ def _generate_task(
     max_attempts: int,
     num_ctx: int,
 ) -> tuple[str | None, str | None, int, str | None, dict | None]:
+    # Runs one task through up to max_attempts model calls, appending a repair note after each rejection.
     prompt = _build_task_prompt(task, generated)
     last_error: str | None = None
     last_diagnostics: dict | None = None
@@ -255,6 +263,7 @@ def _generate_task(
 
 
 def main() -> None:
+    # CLI entry point: load plan -> generate/resume each task in dependency order -> persist files + manifest.
     parser = argparse.ArgumentParser(
         description="Stage 3: generate per-task Python files from a Stage 2 plan via a local Ollama model"
     )
@@ -281,7 +290,7 @@ def main() -> None:
     manifest_path = output_dir / MANIFEST_NAME
     latest_records = {} if args.force else _load_latest_manifest_records(manifest_path)
 
-    generated: dict[str, dict] = {}
+    generated: dict[str, dict] = {}  # task_id -> {filename, code}, kept in memory to feed later dependents
     generated_count = 0
     failed_count = 0
     skipped_count = 0
@@ -291,6 +300,7 @@ def main() -> None:
         if task is None:
             continue
 
+        # Resume support: reuse a prior successful generation instead of re-calling the model.
         prior = latest_records.get(task_id)
         if prior and prior.get("status") == "generated" and prior.get("filename"):
             prior_path = output_dir / prior["filename"]
@@ -338,6 +348,7 @@ def main() -> None:
             _write_jsonl_record(manifest_path, record)
             continue
 
+        # Success: write the file under a TASK-ID-prefixed name and record it for dependents + the manifest.
         # Task ID becomes the filename prefix; sanitize it too since plan files can be hand-edited.
         task_id_safe = re.sub(r"[^A-Za-z0-9_]", "_", task_id)
         filename = _strip_redundant_task_prefix(filename, task_id_safe)

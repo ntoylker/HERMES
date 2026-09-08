@@ -6,6 +6,7 @@ This workspace contains a small pipeline that:
 2. Builds a hybrid index: SQLite FTS5 plus hosted embeddings
 3. Queries the index and aggregates hits to the technique level
 4. Generates cited Stage 1 technique links and turns them into a Stage 2 task plan
+5. Generates per-task Python files from the Stage 2 plan (Stage 3)
 
 Canonical retrieval config: [RETRIEVAL_CONFIG.md](RETRIEVAL_CONFIG.md)
 
@@ -20,6 +21,7 @@ Recommended repo layout:
 - [data/config/stage2_constraints.json](../data/config/stage2_constraints.json)
 - [data/patterns/code_patterns.jsonl](../data/patterns/code_patterns.jsonl)
 - [data/plans/](../data/plans)
+- [data/code_scripts/](../data/code_scripts)
 - [artifacts/offense_index/](../artifacts/offense_index)
 - [artifacts/offense_index_lex/](../artifacts/offense_index_lex)
 - [cache/query_cache.sqlite](../cache/query_cache.sqlite)
@@ -177,7 +179,17 @@ The planner writes:
 
 Use `--include-alternatives` to include Stage 1 alternatives as optional context. Primary Stage 1 techniques remain the required coverage set. See [STAGE2_PLANNER.md](STAGE2_PLANNER.md) for the full input, validation, and output contract.
 
-## 7) Evaluate retrieval
+## 7) Generate code from a plan
+
+`generate_code.py` sends each task in a Stage 2 plan to a local Ollama model, one independent request per task, and writes the result as a Python file under `data/code_scripts/`.
+
+```bash
+python generate_code.py data/plans/human_outs/<stage2-timestamp>.json
+```
+
+See [STAGE3_CODE_GENERATION.md](STAGE3_CODE_GENERATION.md) for the prompt contract, retry/resume behavior, and output manifest format.
+
+## 8) Evaluate retrieval
 
 Create eval cases in `data/eval/eval_cases.jsonl` (one JSON object per line):
 
