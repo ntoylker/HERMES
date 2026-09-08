@@ -5,7 +5,7 @@ This workspace contains a small pipeline that:
 1. Builds an offense-only chunked MITRE ATT&CK JSONL corpus
 2. Builds a hybrid index: SQLite FTS5 plus hosted embeddings
 3. Queries the index and aggregates hits to the technique level
-4. Generates cited, groundedness-validated Stage 1 technique links and turns them into a Stage 2 task plan
+4. Decomposes multi-intent queries, generates cited, groundedness-validated Stage 1 technique links, and turns them into a Stage 2 task plan
 5. Generates per-task Python files from the Stage 2 plan (Stage 3)
 
 Canonical retrieval config: [RETRIEVAL_CONFIG.md](RETRIEVAL_CONFIG.md)
@@ -141,11 +141,11 @@ The query embedding cache is stored as `cache/query_cache.sqlite`, not inside th
 
 ## 5) Generate technique links (RAG)
 
-This wraps retrieval + Gemini generation, validates that every returned technique's citations are grounded in the retrieved evidence (dropping any that are not), and writes:
+This splits multi-intent queries into standalone parts when needed, wraps retrieval + Gemini generation per part, validates that every returned technique's citations are grounded in the retrieved evidence (dropping any that are not), merges parts back into a single answer, and writes:
 - a pretty `.json` file to `data/human_outs/`
 - a compact `.jsonl` file to `data/machine_outs/`
 
-Both files include a `citation_validation` block recording any dropped or flagged entries. For implementation details (ranking logic, source/citation behavior, groundedness validation, and alternatives generation), see [GENERATE_OFFENSE_RAG_INTERNALS.md](GENERATE_OFFENSE_RAG_INTERNALS.md).
+The output includes a top-level `decomposition` block (how the query was split, if at all) and a `parts` array (each part's own retrieved techniques, rationale, and citations), plus the familiar top-level `top_techniques`/`alternatives`/`summary`/`citation_validation` fields merged across parts for backward compatibility with Stage 2. For implementation details (ranking logic, source/citation behavior, groundedness validation, decomposition, and alternatives generation), see [GENERATE_OFFENSE_RAG_INTERNALS.md](GENERATE_OFFENSE_RAG_INTERNALS.md).
 
 ```bash
 ./venv/bin/python generate_offense_rag.py \
@@ -158,6 +158,7 @@ Optional knobs:
 - `--vector-k`, `--bm25-k`, `--lexical-weight` if you are intentionally deviating from the standard config
 - `--max-sources`, `--max-chars-per-source`
 - `--gen-model`, `--temperature`, `--max-output-tokens`
+- `--no-decompose` to disable query decomposition; `--max-subqueries`, `--dedupe-threshold` to tune it
 - `--human-output-dir` to override the default `data/human_outs/` destination
 - `--machine-output-dir` to override the default `data/machine_outs/` destination
 
@@ -219,7 +220,7 @@ Lexical-only baseline:
 
 ## 9) Evaluate generation quality
 
-`eval_offense_generation.py` reuses `data/eval/eval_cases.jsonl` to score the full Stage 1 pipeline (retrieval + Gemini generation + citation validation), not just raw retrieval. It runs `generate_offense_rag.py` per case and reports three metrics inspired by [RAGAS](https://github.com/explodinggradients/ragas), computed deterministically (no extra LLM-judge calls, no new dependencies):
+`eval_offense_generation.py` reuses `data/eval/eval_cases.jsonl` to score the full Stage 1 pipeline (decomposition + retrieval + Gemini generation + citation validation), not just raw retrieval. It runs `generate_offense_rag.py` per case and reports three metrics inspired by [RAGAS](https://github.com/explodinggradients/ragas), computed deterministically (no extra LLM-judge calls, no new dependencies):
 
 - `faithfulness_mean`: fraction of the model's `top_techniques`/`alternatives` entries that survived citation validation (`kept / (kept + dropped)`).
 - `answer_relevancy_mean`: cosine similarity between the query embedding and the generated `summary` embedding, using the same hosted-embeddings client as retrieval.
@@ -231,4 +232,6 @@ Lexical-only baseline:
   --index-dir artifacts/offense_index
 ```
 
-This calls Gemini once per eval case (real API cost) and writes its Stage 1 outputs under `data/eval/human_outs/` and `data/eval/machine_outs/` instead of the main `data/human_outs/`/`data/machine_outs/` directories. Use `--limit` to control cost while iterating, and `--show-failures` to control how many failing cases are printed.
+Pass `--no-decompose` to disable query decomposition for an A/B comparison against the default (decomposition-enabled) run, and `--max-subqueries` to change its cap; both are forwarded straight through to `generate_offense_rag.py`.
+
+This calls Gemini once per eval case (real API cost, plus one additional decomposition call per case unless `--no-decompose` is set) and writes its Stage 1 outputs under `data/eval/human_outs/` and `data/eval/machine_outs/` instead of the main `data/human_outs/`/`data/machine_outs/` directories. Use `--limit` to control cost while iterating, and `--show-failures` to control how many failing cases are printed.

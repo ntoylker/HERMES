@@ -45,6 +45,8 @@ def _run_generation(
     bm25_k: int,
     lexical_weight: float,
     gen_model: str | None,
+    no_decompose: bool,
+    max_subqueries: int,
 ) -> dict:
     cmd = [
         sys.executable,
@@ -57,9 +59,12 @@ def _run_generation(
         "--vector-k", str(vector_k),
         "--bm25-k", str(bm25_k),
         "--lexical-weight", str(lexical_weight),
+        "--max-subqueries", str(max_subqueries),
     ]
     if gen_model:
         cmd += ["--gen-model", gen_model]
+    if no_decompose:
+        cmd.append("--no-decompose")
 
     output = subprocess.check_output(cmd, text=True, stderr=subprocess.STDOUT)
     # generate_offense_rag.py prints exactly one path line per run; take the last line defensively.
@@ -124,6 +129,8 @@ def main() -> None:
     parser.add_argument("--gen-model", default=None, help="Gemini generation model override")
     parser.add_argument("--provider", default=None, help="Override embedding provider (used for answer relevancy)")
     parser.add_argument("--model", default=None, help="Override embedding model (used for answer relevancy)")
+    parser.add_argument("--no-decompose", action="store_true", help="Disable query decomposition (for A/B comparison)")
+    parser.add_argument("--max-subqueries", type=int, default=4, help="Max parts query decomposition may produce")
     parser.add_argument("--limit", type=int, default=None, help="Limit number of cases")
     parser.add_argument("--show-failures", type=int, default=5, help="How many failing cases to show")
 
@@ -163,6 +170,8 @@ def main() -> None:
                 bm25_k=int(args.bm25_k),
                 lexical_weight=float(args.lexical_weight),
                 gen_model=args.gen_model,
+                no_decompose=bool(args.no_decompose),
+                max_subqueries=int(args.max_subqueries),
             )
         except subprocess.CalledProcessError as exc:
             recalls.append(0.0)

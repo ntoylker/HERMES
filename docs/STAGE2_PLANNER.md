@@ -12,7 +12,7 @@ The planner uses these Stage 1 fields:
 - `top_techniques` as the required primary techniques
 - `alternatives` only when `--include-alternatives` is set
 
-Both lists are already filtered by `generate_offense_rag.py`'s citation-groundedness validator; any technique with unverifiable citations is dropped before Stage 1 output is written, so the planner never re-checks citations itself. The Stage 1 `citation_validation` audit key is not consumed by the planner.
+Both lists are already filtered by `generate_offense_rag.py`'s citation-groundedness validator; any technique with unverifiable citations is dropped before Stage 1 output is written, so the planner never re-checks citations itself. The Stage 1 `citation_validation` audit key is not consumed by the planner. If the query was decomposed into multiple parts, `top_techniques`/`alternatives` are already merged and deduplicated across parts (citations re-prefixed as `"Q<n>:S<i>"`); the planner does not consume `citations`, `decomposition`, or `parts` either way.
 
 For each selected technique, it obtains additional context from two local sources:
 

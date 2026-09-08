@@ -14,6 +14,8 @@ from pathlib import Path
 
 import requests
 
+from decompose_query import decompose_query
+
 DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 DEFAULT_GEN_MODEL = "gemini-2.5-pro"
 
@@ -385,6 +387,219 @@ def validate_generated_links(parsed: dict, retrieved: list[dict], sources: list[
     return report
 
 
+def _summarize_retrieved(results: list[dict]) -> list[dict]:
+    return [
+        {
+            "mitre_id": r.get("mitre_id"),
+            "name": r.get("name"),
+            "hybrid_score": r.get("hybrid_score"),
+            "vector_max": r.get("vector_max"),
+            "lexical_best": r.get("lexical_best"),
+        }
+        for r in results
+    ]
+
+
+def _generate_for_part(
+    part_query: str,
+    *,
+    results: list[dict],
+    sources: list[dict],
+    api_key: str,
+    base_url: str,
+    gen_model: str,
+    temperature: float,
+    max_output_tokens: int,
+    thinking_budget: int | None,
+    debug: bool,
+) -> dict:
+    prompt = _build_prompt(part_query, results, sources)
+    try:
+        response_json = _call_gemini_raw(
+            prompt=prompt,
+            api_key=api_key,
+            base_url=base_url,
+            model=gen_model,
+            temperature=temperature,
+            max_output_tokens=max_output_tokens,
+            thinking_budget=thinking_budget,
+        )
+        response_text = _extract_text(response_json)
+    except GenerationEmptyTextError as exc:
+        error = {
+            "type": "generation_empty_text",
+            "message": str(exc),
+            "finish_reason": exc.finish_reason,
+            "prompt_feedback": exc.prompt_feedback,
+            "safety_ratings": exc.safety_ratings,
+            "prompt_chars": len(prompt),
+            "retrieved_count": len(results),
+            "source_count": len(sources),
+            "model": gen_model,
+            "max_output_tokens": max_output_tokens,
+            "thinking_budget": thinking_budget,
+        }
+        if debug:
+            error["response_excerpt"] = _truncate_json(response_json)
+        return {
+            "top_techniques": [],
+            "alternatives": [],
+            "summary": "Model returned empty text.",
+            "citation_validation": None,
+            "error": error,
+        }
+    except Exception as exc:  # noqa: BLE001 - one part's transient failure must not sink the others
+        return {
+            "top_techniques": [],
+            "alternatives": [],
+            "summary": "Generation request failed.",
+            "citation_validation": None,
+            "error": {"type": "generation_request_failed", "message": str(exc)},
+        }
+
+    parsed = _parse_json_response(response_text)
+    if parsed is None:
+        return {
+            "top_techniques": [],
+            "alternatives": [],
+            "summary": "Model did not return valid JSON.",
+            "citation_validation": None,
+            "raw_text": response_text[:4000],
+        }
+
+    citation_validation = validate_generated_links(parsed, results, sources)
+    return {
+        "top_techniques": parsed["top_techniques"],
+        "alternatives": parsed["alternatives"],
+        "summary": str(parsed.get("summary") or ""),
+        "citation_validation": citation_validation,
+    }
+
+
+def _run_part(
+    part: dict,
+    *,
+    index_dir: Path,
+    top_techniques: int,
+    top_chunks: int,
+    vector_k: int,
+    bm25_k: int,
+    lexical_weight: float,
+    lexical_only: bool,
+    max_sources: int,
+    max_chars_per_source: int,
+    api_key: str,
+    base_url: str,
+    gen_model: str,
+    temperature: float,
+    max_output_tokens: int,
+    thinking_budget: int | None,
+    debug: bool,
+) -> dict:
+    part_id = part["id"]
+    part_text = part["text"]
+
+    data = _run_retrieval(
+        query=part_text,
+        index_dir=index_dir,
+        top_techniques=top_techniques,
+        top_chunks=top_chunks,
+        vector_k=vector_k,
+        bm25_k=bm25_k,
+        lexical_weight=lexical_weight,
+        lexical_only=lexical_only,
+    )
+    results = data.get("results") or []
+    if not results:
+        return {
+            "id": part_id,
+            "text": part_text,
+            "retrieved_techniques": [],
+            "top_techniques": [],
+            "alternatives": [],
+            "summary": "No retrieval results.",
+            "citation_validation": None,
+        }
+
+    sources = _fetch_sources(
+        index_dir=index_dir,
+        results=results,
+        max_sources=max_sources,
+        max_chars_per_source=max_chars_per_source,
+    )
+    generated = _generate_for_part(
+        part_text,
+        results=results,
+        sources=sources,
+        api_key=api_key,
+        base_url=base_url,
+        gen_model=gen_model,
+        temperature=temperature,
+        max_output_tokens=max_output_tokens,
+        thinking_budget=thinking_budget,
+        debug=debug,
+    )
+    return {
+        "id": part_id,
+        "text": part_text,
+        "retrieved_techniques": _summarize_retrieved(results),
+        **generated,
+    }
+
+
+def _merge_parts(parts: list[dict]) -> tuple[list[dict], list[dict], str, dict | None]:
+    # Single part (no decomposition): pass top-level fields through untouched for backward compatibility.
+    if len(parts) == 1:
+        p = parts[0]
+        return p["top_techniques"], p["alternatives"], p["summary"], p["citation_validation"]
+
+    def _tag_citations(entry: dict, part_id: str) -> dict:
+        tagged = dict(entry)
+        citations = tagged.get("citations")
+        if isinstance(citations, list):
+            # Local "S#" ids are only unique within a part; prefix to disambiguate once merged.
+            tagged["citations"] = [f"{part_id}:{c}" for c in citations]
+        tagged["from_part"] = part_id
+        return tagged
+
+    merged_top: list[dict] = []
+    merged_alt: list[dict] = []
+    seen_ids: set[str] = set()
+    dropped: list[dict] = []
+    warnings: list[dict] = []
+    summaries: list[str] = []
+    any_validation = False
+
+    for p in parts:
+        for entry in p["top_techniques"]:
+            mitre_id = entry.get("mitre_id")
+            if mitre_id in seen_ids:
+                continue
+            seen_ids.add(mitre_id)
+            merged_top.append(_tag_citations(entry, p["id"]))
+        if p.get("summary"):
+            summaries.append(f"[{p['id']}] {p['summary']}")
+        cv = p.get("citation_validation")
+        if cv is not None:
+            any_validation = True
+            for d in cv.get("dropped") or []:
+                dropped.append({**d, "entry": f"{p['id']}:{d.get('entry')}"})
+            for w in cv.get("warnings") or []:
+                warnings.append({**w, "entry": f"{p['id']}:{w.get('entry')}"})
+
+    for p in parts:
+        for entry in p["alternatives"]:
+            mitre_id = entry.get("mitre_id")
+            if mitre_id in seen_ids:
+                continue
+            seen_ids.add(mitre_id)
+            merged_alt.append(_tag_citations(entry, p["id"]))
+
+    merged_summary = " ".join(summaries)
+    merged_validation = {"dropped": dropped, "warnings": warnings} if any_validation else None
+    return merged_top, merged_alt, merged_summary, merged_validation
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate technique links with citations over the offense index")
     parser.add_argument("query", help="User query")
@@ -414,12 +629,20 @@ def main() -> None:
     )
     parser.add_argument("--gen-model", default=None, help="Gemini generation model")
     parser.add_argument("--temperature", type=float, default=0.2, help="Generation temperature")
-    parser.add_argument("--max-output-tokens", type=int, default=900, help="Max output tokens")
+    parser.add_argument("--max-output-tokens", type=int, default=2048, help="Max output tokens")
     parser.add_argument(
         "--thinking-budget",
         type=int,
         default=0,
         help="Gemini thinking budget (0 uses model default; Gemini 2.5 requires >0)",
+    )
+    parser.add_argument("--no-decompose", action="store_true", help="Disable query decomposition")
+    parser.add_argument("--max-subqueries", type=int, default=4, help="Max parts query decomposition may produce")
+    parser.add_argument(
+        "--dedupe-threshold",
+        type=float,
+        default=0.92,
+        help="Cosine similarity threshold for collapsing near-duplicate decomposed parts",
     )
     parser.add_argument("--debug", action="store_true", help="Include debug metadata in error output")
 
@@ -430,116 +653,75 @@ def main() -> None:
     machine_output_dir = Path(args.machine_output_dir)
     human_output_dir.mkdir(parents=True, exist_ok=True)
     machine_output_dir.mkdir(parents=True, exist_ok=True)
-    data = _run_retrieval(
-        query=str(args.query),
-        index_dir=index_dir,
-        top_techniques=int(args.top_techniques),
-        top_chunks=int(args.top_chunks),
-        vector_k=int(args.vector_k),
-        bm25_k=int(args.bm25_k),
-        lexical_weight=float(args.lexical_weight),
-        lexical_only=bool(args.lexical_only),
-    )
-
-    results = data.get("results") or []
-    if not results:
-        payload = {
-            "query": str(args.query),
-            "top_techniques": [],
-            "summary": "No retrieval results.",
-            "alternatives": [],
-        }
-        output_stem = _timestamped_stem()
-        output_jsonl = machine_output_dir / f"{output_stem}.jsonl"
-        output_json = human_output_dir / f"{output_stem}.json"
-        _write_jsonl_record(output_jsonl, payload)
-        _write_pretty_json(output_json, payload)
-        print(str(output_json))
-        return
-
-    sources = _fetch_sources(
-        index_dir=index_dir,
-        results=results,
-        max_sources=int(args.max_sources),
-        max_chars_per_source=int(args.max_chars_per_source),
-    )
 
     api_key = _env("GOOGLE_API_KEY") or _env("GEMINI_API_KEY")
     if not api_key:
         raise RuntimeError("Missing GOOGLE_API_KEY (or GEMINI_API_KEY)")
-
     base_url = _env("GEMINI_BASE_URL") or DEFAULT_BASE_URL
     gen_model = args.gen_model or _env("GEMINI_GEN_MODEL") or DEFAULT_GEN_MODEL
-
-    prompt = _build_prompt(str(args.query), results, sources)
     resolved_thinking_budget = _resolve_thinking_budget(gen_model, args.thinking_budget)
-    response_json = _call_gemini_raw(
-        prompt=prompt,
-        api_key=api_key,
-        base_url=base_url,
-        model=gen_model,
-        temperature=float(args.temperature),
-        max_output_tokens=int(args.max_output_tokens),
-        thinking_budget=resolved_thinking_budget,
-    )
 
-    try:
-        response_text = _extract_text(response_json)
-    except GenerationEmptyTextError as exc:
-        error_payload = {
-            "query": str(args.query),
-            "top_techniques": [],
-            "summary": "Model returned empty text.",
-            "alternatives": [],
-            "error": {
-                "type": "generation_empty_text",
-                "message": str(exc),
-                "finish_reason": exc.finish_reason,
-                "prompt_feedback": exc.prompt_feedback,
-                "safety_ratings": exc.safety_ratings,
-                "prompt_chars": len(prompt),
-                "retrieved_count": len(results),
-                "source_count": len(sources),
-                "model": gen_model,
-                "max_output_tokens": int(args.max_output_tokens),
-                "thinking_budget": resolved_thinking_budget,
-            },
+    query = str(args.query)
+
+    if args.no_decompose:
+        decomposition = {
+            "decomposed": False,
+            "sub_queries": [{"id": "Q1", "text": query}],
+            "guardrails": {"skipped": True},
         }
-        if args.debug:
-            error_payload["error"]["response_excerpt"] = _truncate_json(response_json)
-        output_stem = _timestamped_stem()
-        output_jsonl = machine_output_dir / f"{output_stem}.jsonl"
-        output_json = human_output_dir / f"{output_stem}.json"
-        _write_jsonl_record(output_jsonl, error_payload)
-        _write_pretty_json(output_json, error_payload)
-        print(str(output_json))
-        return
+    else:
+        decomposition = decompose_query(
+            query,
+            api_key=api_key,
+            base_url=base_url,
+            model=gen_model,
+            max_subqueries=int(args.max_subqueries),
+            dedupe_threshold=float(args.dedupe_threshold),
+        )
 
-    parsed = _parse_json_response(response_text)
-    if parsed is None:
-        raw = response_text[:4000]
-        fallback = {
-            "query": str(args.query),
-            "top_techniques": [],
-            "summary": "Model did not return valid JSON.",
-            "alternatives": [],
-            "raw_text": raw,
-        }
-        output_stem = _timestamped_stem()
-        output_jsonl = machine_output_dir / f"{output_stem}.jsonl"
-        output_json = human_output_dir / f"{output_stem}.json"
-        _write_jsonl_record(output_jsonl, fallback)
-        _write_pretty_json(output_json, fallback)
-        print(str(output_json))
-        return
+    parts = [
+        _run_part(
+            part,
+            index_dir=index_dir,
+            top_techniques=int(args.top_techniques),
+            top_chunks=int(args.top_chunks),
+            vector_k=int(args.vector_k),
+            bm25_k=int(args.bm25_k),
+            lexical_weight=float(args.lexical_weight),
+            lexical_only=bool(args.lexical_only),
+            max_sources=int(args.max_sources),
+            max_chars_per_source=int(args.max_chars_per_source),
+            api_key=api_key,
+            base_url=base_url,
+            gen_model=gen_model,
+            temperature=float(args.temperature),
+            max_output_tokens=int(args.max_output_tokens),
+            thinking_budget=resolved_thinking_budget,
+            debug=bool(args.debug),
+        )
+        for part in decomposition["sub_queries"]
+    ]
 
-    parsed["citation_validation"] = validate_generated_links(parsed, results, sources)
+    top_techniques, alternatives, summary, citation_validation = _merge_parts(parts)
+
+    payload = {
+        "query": query,
+        "decomposition": decomposition,
+        "parts": parts,
+        "top_techniques": top_techniques,
+        "alternatives": alternatives,
+        "summary": summary,
+    }
+    # Match pre-decomposition behavior: key is absent (not null) when nothing was ever validated,
+    # since eval_offense_generation.py checks for its absence to detect an upstream miss.
+    if citation_validation is not None:
+        payload["citation_validation"] = citation_validation
 
     output_stem = _timestamped_stem()
     output_jsonl = machine_output_dir / f"{output_stem}.jsonl"
     output_json = human_output_dir / f"{output_stem}.json"
-    _write_jsonl_record(output_jsonl, parsed)
-    _write_pretty_json(output_json, parsed)
+    _write_jsonl_record(output_jsonl, payload)
+    _write_pretty_json(output_json, payload)
     print(str(output_json))
 
 
