@@ -425,6 +425,7 @@ def _generate_for_part(
             thinking_budget=thinking_budget,
         )
         response_text = _extract_text(response_json)
+        finish_reason = _extract_debug_fields(response_json).get("finish_reason")
     except GenerationEmptyTextError as exc:
         error = {
             "type": "generation_empty_text",
@@ -459,12 +460,14 @@ def _generate_for_part(
 
     parsed = _parse_json_response(response_text)
     if parsed is None:
+        # Surfaces whether MAX_TOKENS truncation (vs. malformed output) caused the parse failure.
         return {
             "top_techniques": [],
             "alternatives": [],
             "summary": "Model did not return valid JSON.",
             "citation_validation": None,
             "raw_text": response_text[:4000],
+            "finish_reason": finish_reason,
         }
 
     citation_validation = validate_generated_links(parsed, results, sources)
@@ -629,7 +632,7 @@ def main() -> None:
     )
     parser.add_argument("--gen-model", default=None, help="Gemini generation model")
     parser.add_argument("--temperature", type=float, default=0.2, help="Generation temperature")
-    parser.add_argument("--max-output-tokens", type=int, default=2048, help="Max output tokens")
+    parser.add_argument("--max-output-tokens", type=int, default=4096, help="Max output tokens")
     parser.add_argument(
         "--thinking-budget",
         type=int,
@@ -637,7 +640,7 @@ def main() -> None:
         help="Gemini thinking budget (0 uses model default; Gemini 2.5 requires >0)",
     )
     parser.add_argument("--no-decompose", action="store_true", help="Disable query decomposition")
-    parser.add_argument("--max-subqueries", type=int, default=4, help="Max parts query decomposition may produce")
+    parser.add_argument("--max-subqueries", type=int, default=10, help="Max parts query decomposition may produce")
     parser.add_argument(
         "--dedupe-threshold",
         type=float,
