@@ -12,6 +12,8 @@ The planner uses these Stage 1 fields:
 - `top_techniques` as the required primary techniques
 - `alternatives` only when `--include-alternatives` is set
 
+Both lists are already filtered by `generate_offense_rag.py`'s citation-groundedness validator; any technique with unverifiable citations is dropped before Stage 1 output is written, so the planner never re-checks citations itself. The Stage 1 `citation_validation` audit key is not consumed by the planner.
+
 For each selected technique, it obtains additional context from two local sources:
 
 1. `artifacts/offense_index/offense_index.sqlite`: one or more ATT&CK chunks, selected with the technique description first, then the overview. This supplies persistent `chunk_id` evidence references rather than Stage 1's run-specific `S1`, `S2`, citation labels.

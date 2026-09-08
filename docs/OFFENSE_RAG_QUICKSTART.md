@@ -5,7 +5,7 @@ This workspace contains a small pipeline that:
 1. Builds an offense-only chunked MITRE ATT&CK JSONL corpus
 2. Builds a hybrid index: SQLite FTS5 plus hosted embeddings
 3. Queries the index and aggregates hits to the technique level
-4. Generates cited Stage 1 technique links and turns them into a Stage 2 task plan
+4. Generates cited, groundedness-validated Stage 1 technique links and turns them into a Stage 2 task plan
 5. Generates per-task Python files from the Stage 2 plan (Stage 3)
 
 Canonical retrieval config: [RETRIEVAL_CONFIG.md](RETRIEVAL_CONFIG.md)
@@ -16,6 +16,8 @@ Recommended repo layout:
 - [data/raw/enterprise-attack/enterprise-attack.json](../data/raw/enterprise-attack/enterprise-attack.json)
 - [data/processed/rag_offense_mitre_chunks.jsonl](../data/processed/rag_offense_mitre_chunks.jsonl)
 - [data/eval/eval_cases.jsonl](../data/eval/eval_cases.jsonl)
+- [data/eval/human_outs/](../data/eval/human_outs) (generation-eval Stage 1 outputs)
+- [data/eval/machine_outs/](../data/eval/machine_outs) (generation-eval Stage 1 outputs)
 - [data/human_outs/](../data/human_outs)
 - [data/machine_outs/](../data/machine_outs)
 - [data/config/stage2_constraints.json](../data/config/stage2_constraints.json)
@@ -139,11 +141,11 @@ The query embedding cache is stored as `cache/query_cache.sqlite`, not inside th
 
 ## 5) Generate technique links (RAG)
 
-This wraps retrieval + Gemini generation and writes:
+This wraps retrieval + Gemini generation, validates that every returned technique's citations are grounded in the retrieved evidence (dropping any that are not), and writes:
 - a pretty `.json` file to `data/human_outs/`
 - a compact `.jsonl` file to `data/machine_outs/`
 
-For implementation details (ranking logic, source/citation behavior, and alternatives generation), see [GENERATE_OFFENSE_RAG_INTERNALS.md](GENERATE_OFFENSE_RAG_INTERNALS.md).
+Both files include a `citation_validation` block recording any dropped or flagged entries. For implementation details (ranking logic, source/citation behavior, groundedness validation, and alternatives generation), see [GENERATE_OFFENSE_RAG_INTERNALS.md](GENERATE_OFFENSE_RAG_INTERNALS.md).
 
 ```bash
 ./venv/bin/python generate_offense_rag.py \
@@ -214,3 +216,19 @@ Lexical-only baseline:
   --index-dir artifacts/offense_index \
   --lexical-only
 ```
+
+## 9) Evaluate generation quality
+
+`eval_offense_generation.py` reuses `data/eval/eval_cases.jsonl` to score the full Stage 1 pipeline (retrieval + Gemini generation + citation validation), not just raw retrieval. It runs `generate_offense_rag.py` per case and reports three metrics inspired by [RAGAS](https://github.com/explodinggradients/ragas), computed deterministically (no extra LLM-judge calls, no new dependencies):
+
+- `faithfulness_mean`: fraction of the model's `top_techniques`/`alternatives` entries that survived citation validation (`kept / (kept + dropped)`).
+- `answer_relevancy_mean`: cosine similarity between the query embedding and the generated `summary` embedding, using the same hosted-embeddings client as retrieval.
+- `end_to_end_recall_mean`: fraction of cases where an expected `mitre_id` survived all the way to the validated final answer, complementing `eval_offense_retrieval.py`'s raw-retrieval recall@K.
+
+```bash
+./venv/bin/python eval_offense_generation.py \
+  --cases data/eval/eval_cases.jsonl \
+  --index-dir artifacts/offense_index
+```
+
+This calls Gemini once per eval case (real API cost) and writes its Stage 1 outputs under `data/eval/human_outs/` and `data/eval/machine_outs/` instead of the main `data/human_outs/`/`data/machine_outs/` directories. Use `--limit` to control cost while iterating, and `--show-failures` to control how many failing cases are printed.

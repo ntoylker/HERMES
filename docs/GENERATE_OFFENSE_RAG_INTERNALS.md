@@ -7,19 +7,21 @@ Use [OFFENSE_RAG_QUICKSTART.md](OFFENSE_RAG_QUICKSTART.md) for standard operatio
 
 ## 1) Purpose and Scope
 
-[generate_offense_rag.py](../generate_offense_rag.py) is an orchestration entry point. It does not build its own retriever. It performs four steps:
+[generate_offense_rag.py](../generate_offense_rag.py) is an orchestration entry point. It does not build its own retriever. It performs five steps:
 
 1. Runs [query_offense_index.py](../query_offense_index.py) with configured retrieval parameters.
 2. Pulls source chunks from the SQLite index for explainability.
 3. Builds a constrained prompt with source IDs (`S1`, `S2`, ...).
-4. Calls Gemini and returns parsed JSON.
+4. Calls Gemini and parses the JSON response.
+5. Validates each returned technique's citations against the retrieved evidence and drops any that fail (see section 4.4).
 
 It returns a JSON object with:
 
 - `query`
-- `top_techniques`
+- `top_techniques` (post-validation; ungrounded entries already removed)
 - `summary`
-- `alternatives`
+- `alternatives` (post-validation; ungrounded entries already removed)
+- `citation_validation`: `{"dropped": [...], "warnings": [...]}` audit report from step 5
 
 ## 2) End-to-End Flow
 
@@ -35,12 +37,14 @@ Execution flow:
    - numbered source blocks `[S1]`, `[S2]`, ...
 6. Call Gemini `generateContent` with JSON response MIME type.
 7. Parse model output as JSON (with fence/substring fallback).
-8. Write final outputs (`.json` + `.jsonl`) and print the `.json` path.
+8. Validate citations: drop any `top_techniques`/`alternatives` entry whose technique or citations are not grounded in the retrieved evidence (section 4.4).
+9. Write final outputs (`.json` + `.jsonl`) and print the `.json` path.
 
 Important boundary:
 
 - Retrieval ranking is deterministic Python logic in [query_offense_index.py](../query_offense_index.py).
 - Explanations, citations assignment to claims, summary wording, and `alternatives` are model output constrained by the prompt.
+- Citation validation (section 4.4) is deterministic Python logic that filters model output; it does not rewrite or repair claims.
 
 ## 3) How Top Techniques Are Ranked
 
@@ -133,6 +137,19 @@ Not explicitly.
 - `citations` arrays in output are chosen by the model from available `S#` blocks.
 
 Therefore, `S1` does not mean "best globally." It means "first source block in this prompt instance."
+
+### 4.4 Citation validation (groundedness gate)
+
+Before output is written, `validate_generated_links()` checks every entry in `top_techniques` and `alternatives` against the retrieved evidence, not just against the model's own claims:
+
+- `mitre_id` must be one of the techniques actually returned by [query_offense_index.py](../query_offense_index.py) for this run.
+- `citations` must be a non-empty list of known `S#` labels from the prompt's source blocks.
+- At least one cited source must belong to the same technique being claimed (technique-to-source consistency) - citing `S3` (a different technique's evidence) to support a claim about `T1059.001` fails this check.
+- A non-fatal warning (not a rejection) is recorded when a multi-sentence rationale is backed by a single citation, flagging thin evidence for human review.
+
+Any entry that fails a hard check is dropped from the output entirely (fail closed); entries are never rewritten or auto-corrected. The full accounting - which entries were dropped and why, plus any soft warnings - is persisted under the `citation_validation` key for audit, but Stage 2 ([plan_tasks.py](../plan_tasks.py)) does not read that key.
+
+This exists because valid JSON with a plausible `mitre_id` and `citations: ["S1", "S3"]` is not proof of grounding - nothing upstream stops the model from citing a source that does not exist or that supports a different technique. See [../eval_offense_generation.py](../eval_offense_generation.py) for a corpus-level faithfulness metric built on top of this same gate.
 
 ## 5) How Alternatives Are Produced
 
@@ -257,9 +274,12 @@ Use `--debug` when investigating model-returned empty text.
 - Operational quickstart: [OFFENSE_RAG_QUICKSTART.md](OFFENSE_RAG_QUICKSTART.md)
 - Canonical retrieval defaults: [RETRIEVAL_CONFIG.md](RETRIEVAL_CONFIG.md)
 - Stage 2 planning contract: [STAGE2_PLANNER.md](STAGE2_PLANNER.md)
+- Generation-quality evaluation: `eval_offense_generation.py` (see [OFFENSE_RAG_QUICKSTART.md](OFFENSE_RAG_QUICKSTART.md) section 9)
 
 This file is the implementation deep dive for section "5) Generate technique links (RAG)" in [OFFENSE_RAG_QUICKSTART.md](OFFENSE_RAG_QUICKSTART.md).
 
 ## 10) Stage 2 Handoff
 
 The pretty JSON written to `data/human_outs/<timestamp>.json` is the direct input to `plan_tasks.py`. Stage 2 uses `query` and `top_techniques` as its required planning inputs; it can include `alternatives` only when explicitly requested. Stage 2 does not use the generated `S1`, `S2`, citation labels as persistent identifiers. Instead, it resolves each selected technique against the SQLite index and records durable `chunk_id` references in the task plan.
+
+`top_techniques` and `alternatives` are already post-validation by the time Stage 2 sees them (ungrounded entries were dropped per section 4.4); Stage 2 does not re-check citations and ignores the `citation_validation` key entirely.

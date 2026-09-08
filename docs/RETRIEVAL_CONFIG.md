@@ -16,6 +16,7 @@ These are the winning parameters from the 13-case retrieval sweep run on 2026-07
 
 - `query_offense_index.py`
 - `eval_offense_retrieval.py`
+- `eval_offense_generation.py` (passes the same retrieval knobs through to `generate_offense_rag.py`)
 - `generate_offense_rag.py`
 - `sweep_offense_retrieval_fast.py` as the baseline standard when you want to compare against alternatives
 

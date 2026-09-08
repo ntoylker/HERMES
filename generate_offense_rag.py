@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+import re
 import sqlite3
 import subprocess
 import sys
@@ -315,6 +316,75 @@ def _call_gemini_raw(
     return resp.json()
 
 
+def _validate_technique_entry(
+    entry: dict,
+    *,
+    allowed_techniques: set[str],
+    source_technique_by_id: dict[str, str | None],
+) -> tuple[list[str], list[str]]:
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    mitre_id = entry.get("mitre_id")
+    if not mitre_id:
+        errors.append("missing mitre_id")
+        return errors, warnings
+    mitre_id = str(mitre_id)
+    if mitre_id not in allowed_techniques:
+        errors.append(f"mitre_id '{mitre_id}' not in retrieved techniques")
+
+    citations = entry.get("citations")
+    if not isinstance(citations, list) or not citations:
+        errors.append("missing or empty citations")
+        return errors, warnings
+    if any(not isinstance(c, str) or not c.strip() for c in citations):
+        errors.append("citations contain empty/non-string entries")
+
+    known_citations = [c for c in citations if c in source_technique_by_id]
+    unknown_citations = [c for c in citations if c not in source_technique_by_id]
+    if unknown_citations:
+        errors.append(f"unknown citation ids {unknown_citations}")
+
+    # Groundedness: at least one citation must belong to the same technique being claimed.
+    cited_technique_ids = {source_technique_by_id[c] for c in known_citations}
+    if known_citations and mitre_id not in cited_technique_ids:
+        errors.append(f"citations {known_citations} do not support claimed technique '{mitre_id}'")
+
+    # Heuristic only: flags thin evidence for review, never rejects on its own.
+    rationale = str(entry.get("rationale") or "")
+    sentence_count = len([s for s in re.split(r"[.!?]+", rationale) if s.strip()])
+    if sentence_count > 2 and len(known_citations) <= 1:
+        warnings.append(f"{sentence_count} rationale sentences backed by only {len(known_citations)} citation(s)")
+
+    return errors, warnings
+
+
+def validate_generated_links(parsed: dict, retrieved: list[dict], sources: list[dict]) -> dict:
+    allowed_techniques = {str(t["mitre_id"]) for t in retrieved if t.get("mitre_id")}
+    source_technique_by_id = {f"S{i}": s.get("mitre_id") for i, s in enumerate(sources, start=1)}
+
+    report: dict = {"dropped": [], "warnings": []}
+    for section in ("top_techniques", "alternatives"):
+        kept = []
+        for entry in parsed.get(section) or []:
+            errors, warnings = _validate_technique_entry(
+                entry,
+                allowed_techniques=allowed_techniques,
+                source_technique_by_id=source_technique_by_id,
+            )
+            label = f"{section}:{entry.get('mitre_id')!r}"
+            if errors:
+                # Fail closed: ungrounded entries are dropped, not passed on to Stage 2.
+                report["dropped"].append({"entry": label, "reasons": errors})
+                continue
+            if warnings:
+                report["warnings"].append({"entry": label, "reasons": warnings})
+            kept.append(entry)
+        parsed[section] = kept
+
+    return report
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate technique links with citations over the offense index")
     parser.add_argument("query", help="User query")
@@ -462,6 +532,8 @@ def main() -> None:
         _write_pretty_json(output_json, fallback)
         print(str(output_json))
         return
+
+    parsed["citation_validation"] = validate_generated_links(parsed, results, sources)
 
     output_stem = _timestamped_stem()
     output_jsonl = machine_output_dir / f"{output_stem}.jsonl"
