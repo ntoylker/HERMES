@@ -17,7 +17,6 @@ Both lists are already filtered by `generate_offense_rag.py`'s citation-grounded
 For each selected technique, it obtains additional context from two local sources:
 
 1. `artifacts/offense_index/offense_index.sqlite`: one or more ATT&CK chunks, selected with the technique description first, then the overview. This supplies persistent `chunk_id` evidence references rather than Stage 1's run-specific `S1`, `S2`, citation labels.
-2. `data/patterns/code_patterns.jsonl`: up to `--patterns-per-technique` vetted pattern records matched by exact MITRE ATT&CK ID. A missing pattern is allowed; the planner still uses ATT&CK evidence.
 
 The exact planning context given to the model is written to `data/plans/machine_outs/<timestamp>.input.json`.
 
@@ -58,10 +57,8 @@ Gemini generation requires `GOOGLE_API_KEY` or `GEMINI_API_KEY`; the planner use
 
 Useful options:
 
-- `--pattern-library`: pattern JSONL location; default `data/patterns/code_patterns.jsonl`
 - `--constraints-file`: planning policy JSON location; default `data/config/stage2_constraints.json`
 - `--evidence-per-technique`: ATT&CK chunks included per technique; default `1`
-- `--patterns-per-technique`: exact-ID pattern records included per technique; default `2`
 - `--include-alternatives`: add Stage 1 alternatives as optional planning context
 - `--max-repair-attempts`: number of model attempts after validation failures; default `2`
 - `--max-output-tokens`: model output budget; default `4000`

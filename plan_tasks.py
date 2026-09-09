@@ -1,56 +1,40 @@
 """Stage 2 planner: convert Stage 1 ATT&CK links into validated coding-task plans.
 
-The LLM proposes task structure; this module supplies local evidence and patterns,
-then deterministically validates, orders, and persists the canonical plan.
+Acts as the System Architect for the HERMES pipeline:
+1. Ingests Stage 1 output (query, phases, top techniques, alternatives).
+2. Queries SQLite index (artifacts/offense_index/offense_index.sqlite) for MITRE ATT&CK procedure evidence.
+3. Uses dual-backend LLM provider (local LM Studio Qwen or Gemini REST fallback).
+4. Enforces deterministic validation: JSON schema, acyclic DAG, provides/consumes symbol contracts,
+   vocabulary check, and TTP coverage.
+5. Runs a self-repair retry loop upon validation failure.
+6. Persists machine records (.jsonl) and formatted human summaries (.json).
 """
 
 import argparse
 import json
 import os
 import sqlite3
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 import requests
-
 from dotenv import load_dotenv
+
 load_dotenv()
 
-DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
-DEFAULT_GEN_MODEL = "gemini-2.5-pro"
-
-
-class GenerationEmptyTextError(RuntimeError):
-    def __init__(
-        self,
-        message: str,
-        *,
-        finish_reason: str | None = None,
-        prompt_feedback: dict | None = None,
-        safety_ratings: list | None = None,
-    ) -> None:
-        super().__init__(message)
-        self.finish_reason = finish_reason
-        self.prompt_feedback = prompt_feedback
-        self.safety_ratings = safety_ratings
-
-
-def _env(name: str) -> str | None:
-    value = os.getenv(name)
-    return value if value and value.strip() else None
+DEFAULT_LMSTUDIO_URL = "http://localhost:1234/v1/chat/completions"
+DEFAULT_LMSTUDIO_MODEL = "local-model"
+DEFAULT_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
+DEFAULT_GEMINI_MODEL = "gemini-2.5-pro"
+DEFAULT_TIMEOUT = 600
+DEFAULT_MAX_TOKENS = 16384
+DEFAULT_MAX_RETRIES = 3
 
 
 def _timestamped_stem() -> str:
     return datetime.now().strftime("%Y%m%d_%H_%M_%S")
-
-
-def _write_jsonl_record(path: Path, payload: dict) -> None:
-    with path.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(payload, ensure_ascii=False) + "\n")
-
-
-def _write_pretty_json(path: Path, payload: dict) -> None:
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
 def _strip_json_fences(text: str) -> str:
@@ -67,13 +51,13 @@ def _strip_json_fences(text: str) -> str:
 
 def _try_parse_json(text: str) -> dict | None:
     try:
-        return json.loads(text)
+        val = json.loads(text)
+        return val if isinstance(val, dict) else None
     except json.JSONDecodeError:
         return None
 
 
 def _parse_json_response(text: str) -> dict | None:
-    # Recover JSON when a model wraps an otherwise valid response in prose or fences.
     parsed = _try_parse_json(text)
     if parsed is not None:
         return parsed
@@ -93,585 +77,653 @@ def _parse_json_response(text: str) -> dict | None:
     return None
 
 
-def _extract_debug_fields(response_json: dict) -> dict:
-    candidates = response_json.get("candidates") or []
-    candidate = candidates[0] if candidates else {}
-    return {
-        "finish_reason": candidate.get("finishReason"),
-        "prompt_feedback": response_json.get("promptFeedback"),
-        "safety_ratings": candidate.get("safetyRatings"),
-    }
+class ContextBuilder:
+    """Builds prompt context from Stage 1 artifacts, SQLite evidence, and configuration."""
 
+    def __init__(
+        self,
+        stage1_path: Path,
+        db_path: Path = Path("artifacts/offense_index/offense_index.sqlite"),
+        constraints_path: Path = Path("data/config/stage2_constraints.json"),
+    ) -> None:
+        self.stage1_path = stage1_path
+        self.db_path = db_path
+        self.constraints_path = constraints_path
 
-def _extract_text(response_json: dict) -> str:
-    candidates = response_json.get("candidates") or []
-    if not candidates:
-        debug = _extract_debug_fields(response_json)
-        raise GenerationEmptyTextError("Generation returned no candidates", **debug)
-    content = candidates[0].get("content") or {}
-    parts = content.get("parts") or []
-    texts = [p.get("text", "") for p in parts if isinstance(p, dict)]
-    text = "".join(texts).strip()
-    if not text:
-        debug = _extract_debug_fields(response_json)
-        raise GenerationEmptyTextError("Generation returned empty text", **debug)
-    return text
+    def load_stage1_artifact(self) -> dict[str, Any]:
+        if not self.stage1_path.exists():
+            raise FileNotFoundError(f"Missing Stage 1 output file: {self.stage1_path}")
+        data = json.loads(self.stage1_path.read_text(encoding="utf-8"))
+        if not data.get("query"):
+            raise ValueError(f"Stage 1 output missing 'query': {self.stage1_path}")
+        return data
 
+    def load_constraints(self) -> dict[str, Any]:
+        if not self.constraints_path.exists():
+            raise FileNotFoundError(f"Missing constraints file: {self.constraints_path}")
+        return json.loads(self.constraints_path.read_text(encoding="utf-8"))
 
-def _resolve_thinking_budget(model: str, requested: int | None) -> int | None:
-    if requested is None:
-        return None
-    if requested > 0:
-        return requested
-    model_l = model.lower()
-    if "gemini-2.5" in model_l:
-        return 256
-    return None
+    def extract_stage1_elements(
+        self, stage1_data: dict[str, Any]
+    ) -> tuple[str, str, list[dict[str, str]], set[str], set[str]]:
+        query = str(stage1_data.get("query", ""))
+        summary = str(stage1_data.get("summary", ""))
 
+        sub_queries: list[dict[str, str]] = []
+        decomposition = stage1_data.get("decomposition") or {}
+        if isinstance(decomposition, dict) and decomposition.get("sub_queries"):
+            for sq in decomposition.get("sub_queries") or []:
+                if isinstance(sq, dict) and sq.get("id") and sq.get("text"):
+                    sub_queries.append({"id": str(sq["id"]), "text": str(sq["text"])})
+        elif isinstance(stage1_data.get("parts"), list):
+            for part in stage1_data["parts"]:
+                if isinstance(part, dict) and part.get("id") and part.get("text"):
+                    sub_queries.append({"id": str(part["id"]), "text": str(part["text"])})
 
-def _call_gemini_raw(
-    *,
-    prompt: str,
-    api_key: str,
-    base_url: str,
-    model: str,
-    temperature: float,
-    max_output_tokens: int,
-    thinking_budget: int | None,
-) -> dict:
-    url = f"{base_url.rstrip('/')}/models/{model}:generateContent?key={api_key}"
-    generation_config: dict = {
-        "temperature": float(temperature),
-        "maxOutputTokens": int(max_output_tokens),
-        "responseMimeType": "application/json",
-    }
-    if thinking_budget is not None:
-        generation_config["thinkingConfig"] = {"thinkingBudget": int(thinking_budget)}
+        top_tech_ids: set[str] = set()
+        alt_tech_ids: set[str] = set()
 
-    payload = {
-        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-        "generationConfig": generation_config,
-    }
+        if isinstance(stage1_data.get("top_techniques"), list):
+            for t in stage1_data["top_techniques"]:
+                if isinstance(t, dict) and t.get("mitre_id"):
+                    top_tech_ids.add(str(t["mitre_id"]).strip())
 
-    resp = requests.post(url, json=payload, timeout=90)
-    if resp.status_code != 200:
-        raise RuntimeError(f"Generation request failed ({resp.status_code}): {resp.text[:500]}")
-    return resp.json()
+        if isinstance(stage1_data.get("alternatives"), list):
+            for t in stage1_data["alternatives"]:
+                if isinstance(t, dict) and t.get("mitre_id"):
+                    alt_tech_ids.add(str(t["mitre_id"]).strip())
 
+        if isinstance(stage1_data.get("parts"), list):
+            for part in stage1_data["parts"]:
+                if not isinstance(part, dict):
+                    continue
+                for t in part.get("top_techniques") or []:
+                    if isinstance(t, dict) and t.get("mitre_id"):
+                        top_tech_ids.add(str(t["mitre_id"]).strip())
+                for t in part.get("alternatives") or []:
+                    if isinstance(t, dict) and t.get("mitre_id"):
+                        alt_tech_ids.add(str(t["mitre_id"]).strip())
 
-def _load_stage1_output(path: Path) -> dict:
-    if not path.exists():
-        raise RuntimeError(f"Missing Stage 1 output file: {path}")
-    data = json.loads(path.read_text(encoding="utf-8"))
-    if not data.get("query"):
-        raise RuntimeError(f"Stage 1 output missing 'query': {path}")
-    return data
+        if not top_tech_ids and isinstance(stage1_data.get("parts"), list):
+            for part in stage1_data["parts"]:
+                if not isinstance(part, dict):
+                    continue
+                for t in (part.get("retrieved_techniques") or [])[:3]:
+                    if isinstance(t, dict) and t.get("mitre_id"):
+                        top_tech_ids.add(str(t["mitre_id"]).strip())
 
+        return query, summary, sub_queries, top_tech_ids, alt_tech_ids
 
-def _load_constraints(path: Path) -> dict:
-    if not path.exists():
-        raise RuntimeError(f"Missing constraints file: {path}")
-    return json.loads(path.read_text(encoding="utf-8"))
+    def fetch_attack_evidence(
+        self, technique_ids: set[str], limit_per_technique: int = 3, max_chars: int = 800
+    ) -> dict[str, list[dict[str, str]]]:
+        if not self.db_path.exists():
+            raise FileNotFoundError(f"Missing SQLite index: {self.db_path}")
 
+        evidence_map: dict[str, list[dict[str, str]]] = {tid: [] for tid in technique_ids}
+        if not technique_ids:
+            return evidence_map
 
-def _fetch_attack_evidence(db_path: Path, mitre_id: str, limit: int, max_chars: int = 1000) -> list[dict]:
-    if not db_path.exists():
-        raise RuntimeError(f"Missing index database: {db_path}")
-
-    # The planner only reads the Stage 1 index; it never modifies retrieval artifacts.
-    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-    try:
-        rows = conn.execute(
+        conn = sqlite3.connect(f"file:{self.db_path.as_posix()}?mode=ro", uri=True)
+        try:
+            placeholders = ",".join("?" for _ in technique_ids)
+            query = f"""
+                SELECT mitre_id, name, chunk_type, text
+                FROM chunks
+                WHERE mitre_id IN ({placeholders})
+                ORDER BY CASE chunk_type
+                    WHEN 'technique_description' THEN 0
+                    WHEN 'technique_overview' THEN 1
+                    ELSE 2 END, id ASC
             """
-            SELECT chunk_id, chunk_type, text FROM chunks
-            WHERE mitre_id = ?
-            -- Prefer concise technique definitions before procedure examples.
-            ORDER BY CASE chunk_type
-                WHEN 'technique_description' THEN 0
-                WHEN 'technique_overview' THEN 1
-                ELSE 2 END, id ASC
-            LIMIT ?
-            """,
-            (mitre_id, limit),
-        ).fetchall()
-    finally:
-        conn.close()
+            cursor = conn.execute(query, list(technique_ids))
+            for mid, name, chunk_type, text in cursor.fetchall():
+                mid_str = str(mid).strip()
+                if mid_str in evidence_map and len(evidence_map[mid_str]) < limit_per_technique:
+                    snippet = (text or "")[:max_chars].strip()
+                    evidence_map[mid_str].append({
+                        "name": str(name or ""),
+                        "chunk_type": str(chunk_type or ""),
+                        "text": snippet,
+                    })
+        finally:
+            conn.close()
 
-    return [
-        {"chunk_id": chunk_id, "chunk_type": chunk_type, "text": (text or "")[:max_chars]}
-        for chunk_id, chunk_type, text in rows
-    ]
+        return evidence_map
 
+    def build_prompts(
+        self,
+        feedback: list[str] | None = None,
+        previous_plan: dict | None = None,
+    ) -> tuple[str, str, set[str]]:
+        stage1_data = self.load_stage1_artifact()
+        constraints = self.load_constraints()
+        query, summary, sub_queries, top_tech_ids, alt_tech_ids = self.extract_stage1_elements(stage1_data)
 
-def _load_pattern_library(path: Path) -> list[dict]:
-    if not path.exists():
-        return []
-    patterns: list[dict] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if line:
-            patterns.append(json.loads(line))
-    return patterns
+        all_techniques = top_tech_ids | alt_tech_ids
+        evidence_map = self.fetch_attack_evidence(all_techniques, limit_per_technique=3)
 
+        allowed_task_types = constraints.get("allowed_task_types", [])
+        target_language = constraints.get("target_language", "python")
+        min_py_version = constraints.get("min_python_version", "3.11")
 
-def _retrieve_patterns(patterns: list[dict], mitre_id: str, limit: int) -> list[dict]:
-    # Exact ATT&CK matching keeps planner patterns traceable to their techniques.
-    matches = [p for p in patterns if mitre_id in (p.get("techniques") or [])]
-    return matches[:limit]
-
-
-def _build_technique_context(
-    *,
-    mitre_id: str,
-    name: str,
-    rationale: str,
-    index_dir: Path,
-    patterns: list[dict],
-    evidence_per_technique: int,
-    patterns_per_technique: int,
-) -> dict:
-    evidence = _fetch_attack_evidence(index_dir / "offense_index.sqlite", mitre_id, evidence_per_technique)
-    matched_patterns = _retrieve_patterns(patterns, mitre_id, patterns_per_technique)
-    return {
-        "mitre_id": mitre_id,
-        "name": name,
-        "rationale": rationale,
-        "evidence": evidence,
-        "patterns": [
-            {
-                "pattern_id": p["pattern_id"],
-                "title": p.get("title"),
-                "intent": p.get("intent"),
-                "pattern_type": p.get("pattern_type"),
-                "language": p.get("language"),
-                "inputs": p.get("inputs"),
-                "outputs": p.get("outputs"),
-                "constraints": p.get("constraints"),
-                "code_excerpt": p.get("code_excerpt"),
-            }
-            for p in matched_patterns
-        ],
-    }
-
-
-def _build_planning_context(
-    *,
-    stage1: dict,
-    index_dir: Path,
-    patterns: list[dict],
-    constraints: dict,
-    request_id: str,
-    include_alternatives: bool,
-    evidence_per_technique: int,
-    patterns_per_technique: int,
-) -> dict:
-    # Preserve Stage 1 ranking order for primary techniques.
-    primary = [
-        _build_technique_context(
-            mitre_id=t["mitre_id"],
-            name=t.get("name") or "Unknown",
-            rationale=t.get("rationale") or "",
-            index_dir=index_dir,
-            patterns=patterns,
-            evidence_per_technique=evidence_per_technique,
-            patterns_per_technique=patterns_per_technique,
+        system_prompt = (
+            "You are the Lead Systems Architect for the HERMES offensive security research pipeline.\n"
+            "Your role in Stage 2 is to translate high-level MITRE ATT&CK techniques and attack phases into a "
+            "coherent, modular, executable Directed Acyclic Graph (DAG) of technical implementation tasks.\n"
+            "These tasks will be passed to Stage 3 (code generation) for automated synthesis and sandbox testing.\n"
+            "You must output ONLY valid, well-formed JSON conforming strictly to the requested schema, with no "
+            "conversational preamble or markdown commentary outside JSON."
         )
-        for t in (stage1.get("top_techniques") or [])
-        if t.get("mitre_id")
-    ]
 
-    alternatives: list[dict] = []
-    if include_alternatives:
-        primary_ids = {t["mitre_id"] for t in primary}
-        alternatives = [
-            _build_technique_context(
-                mitre_id=t["mitre_id"],
-                name=t.get("name") or "Unknown",
-                rationale=t.get("rationale") or "",
-                index_dir=index_dir,
-                patterns=patterns,
-                evidence_per_technique=evidence_per_technique,
-                patterns_per_technique=patterns_per_technique,
-            )
-            for t in (stage1.get("alternatives") or [])
-            if t.get("mitre_id") and t["mitre_id"] not in primary_ids
-        ]
-
-    return {
-        "schema_version": "1.0",
-        "request_id": request_id,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-        "source": {"stage": "stage_1", "query": stage1.get("query")},
-        "techniques": {"primary": primary, "alternatives": alternatives},
-        "planning_constraints": constraints,
-    }
-
-
-def _build_prompt(context: dict, repair_notes: list[str] | None) -> str:
-    allowed_task_types = context["planning_constraints"].get("allowed_task_types", [])
-    allowed_languages = context["planning_constraints"].get("allowed_languages", [])
-
-    lines = [
-        "You are a technical task planner supporting an academic, defensive security-research pipeline.",
-        "The system runs entirely inside an isolated sandbox with no external network access and no real "
-        "target systems. You do not write code and you do not provide operational attack instructions.",
-        "",
-        "Decompose the given MITRE ATT&CK techniques into implementation-neutral coding tasks that a later "
-        "coding agent will implement as benign simulations, interfaces, telemetry, or tests.",
-        "",
-        "Rules:",
-        "- Use ONLY the techniques, evidence, and patterns provided below.",
-        "- Every task must include maps_to_techniques using only the technique IDs provided.",
-        "- Every primary technique must be covered by at least one task.",
-        "- task_type must be one of: " + ", ".join(allowed_task_types),
-        "- language must be one of: " + ", ".join(allowed_languages),
-        "- Assign each task a short local_id (e.g. t1, t2) and reference dependencies via depends_on using "
-        "only those local_ids.",
-        "- Cite evidence_refs.attack_chunks (chunk_id strings) and evidence_refs.patterns (pattern_id strings) "
-        "ONLY from the values provided below. Do not invent IDs.",
-        "- Do not include real exploit code, credentials, or live network/C2 behavior in any field.",
-        "- Output ONLY valid JSON of the shape: "
-        '{"tasks": [{"local_id": <string>, "title": <string>, "task_type": <string>, "purpose": <string>, '
-        '"maps_to_techniques": [<string>...], "depends_on": [<local_id>...], "inputs": [...], "outputs": [...], '
-        '"language": <string>, "constraints": [<string>...], "acceptance_criteria": [<string>...], '
-        '"evidence_refs": {"attack_chunks": [<string>...], "patterns": [<string>...]}}]}',
-        "",
-        f"User query:\n{context['source']['query']}",
-        "",
-        "Primary techniques:",
-        json.dumps(context["techniques"]["primary"], ensure_ascii=False, indent=2),
-    ]
-
-    if context["techniques"]["alternatives"]:
-        lines += [
+        user_prompt_lines = [
+            "# HERMES STAGE 2: TASK PLAN SYNTHESIS",
             "",
-            "Alternative techniques (optional context only):",
-            json.dumps(context["techniques"]["alternatives"], ensure_ascii=False, indent=2),
-        ]
-
-    if repair_notes:
-        lines += [
+            "## 1. RESEARCH & OPERATIONAL CONSTRAINTS",
+            f"- Environment: Isolated research sandbox (academic red-teaming research).",
+            f"- Target Language: {target_language} ({min_py_version}+).",
+            f"- Allowed Task Types: {json.dumps(allowed_task_types)}",
             "",
-            "The previous attempt was rejected for these reasons. Fix them:",
-            json.dumps(repair_notes, ensure_ascii=False, indent=2),
+            "## 2. SOURCE QUERY & ATTACK PHASES",
+            f"Source Query:\n{query}",
+            "",
         ]
 
-    return "\n".join(lines)
+        if sub_queries:
+            user_prompt_lines.append("Attack Phases (Decomposition):")
+            for sq in sub_queries:
+                user_prompt_lines.append(f"  - [{sq['id']}] {sq['text']}")
+            user_prompt_lines.append("")
+
+        if summary:
+            user_prompt_lines.append(f"Stage 1 Synthesis Summary:\n{summary}\n")
+
+        user_prompt_lines.append("## 3. MITRE ATT&CK EVIDENCE & PROCEDURES")
+        user_prompt_lines.append("Required Top Techniques to map into tasks:")
+        for tid in sorted(top_tech_ids):
+            chunks = evidence_map.get(tid, [])
+            tech_name = chunks[0]["name"] if chunks else "Unknown"
+            user_prompt_lines.append(f"- {tid} ({tech_name}):")
+            for c in chunks:
+                user_prompt_lines.append(f"    * [{c['chunk_type']}] {c['text']}")
+
+        if alt_tech_ids:
+            user_prompt_lines.append("\nAlternative / Supporting Techniques:")
+            for tid in sorted(alt_tech_ids):
+                chunks = evidence_map.get(tid, [])
+                tech_name = chunks[0]["name"] if chunks else "Unknown"
+                user_prompt_lines.append(f"- {tid} ({tech_name})")
+
+        user_prompt_lines.extend([
+            "",
+            "## 4. ARCHITECTURAL CONTRACT REQUIREMENTS",
+            "1. Output a modular, ordered DAG of tasks (e.g. TASK_001, TASK_002, etc.).",
+            "2. Every task must declare:",
+            "   - `task_id`: e.g. 'TASK_001', 'TASK_002'",
+            f"   - `task_type`: MUST be one of {allowed_task_types}",
+            "   - `suggested_filename`: Python filename (e.g. 'credential_store.py')",
+            "   - `description`: 1-2 sentence description of the task's responsibility.",
+            "   - `technique_ids`: array of MITRE ATT&CK technique IDs (e.g. ['T1552.001']). ALL top techniques listed above MUST be covered across the tasks.",
+            "   - `dependencies`: array of prerequisite task_ids that must run/be built before this task (e.g. ['TASK_001']). Form a strictly acyclic DAG.",
+            "   - `provides`: list of exact exported class/function/variable symbol names created by this task.",
+            "   - `consumes`: list of imported symbol names needed by this task. RULE: Every symbol in `consumes` MUST be provided by at least one task listed in `dependencies`.",
+            "   - `implementation_details`: Concrete architecture instructions specifying standard libraries (e.g., configparser, ctypes, socket, ssl, urllib, subprocess) or mechanics.",
+            "   - `rag_retrieval_hints`: 2-4 search queries for Stage 3 RAG to retrieve real Python implementation patterns.",
+            "",
+            "## 5. TARGET JSON OUTPUT SCHEMA",
+            "Return JSON adhering strictly to this schema:",
+            "```json",
+            "{",
+            '  "plan_id": "PLAN_<TIMESTAMP>",',
+            f'  "source_query": {json.dumps(query)},',
+            f'  "stage1_ref": {json.dumps(self.stage1_path.name)},',
+            '  "tasks": [',
+            "    {",
+            '      "task_id": "TASK_001",',
+            '      "task_type": "data_model",',
+            '      "suggested_filename": "credential_store.py",',
+            '      "description": "Define typed data structures for harvested cloud credentials.",',
+            '      "technique_ids": ["T1552.001"],',
+            '      "dependencies": [],',
+            '      "provides": ["CredentialStore", "AWSCredential"],',
+            '      "consumes": [],',
+            '      "implementation_details": "Implement Python dataclasses representing AWS credentials.",',
+            '      "rag_retrieval_hints": ["Python dataclass credential model", "AWS credential parser schema"]',
+            "    }",
+            "  ]",
+            "}",
+            "```",
+        ])
+
+        if feedback:
+            user_prompt_lines.extend([
+                "",
+                "## REPAIR FEEDBACK (PREVIOUS ATTEMPT REJECTED)",
+                "Your previous plan failed validation. Correct the errors below:",
+            ])
+            for err in feedback:
+                user_prompt_lines.append(f"- {err}")
+            if previous_plan:
+                user_prompt_lines.extend([
+                    "",
+                    "Previous invalid plan was:",
+                    json.dumps(previous_plan, indent=2),
+                ])
+
+        return system_prompt, "\n".join(user_prompt_lines), top_tech_ids
 
 
-def _topo_order(local_ids: list[str], edges: dict[str, list[str]]) -> tuple[list[str] | None, bool]:
-    # Depth-first traversal returns dependencies before the tasks that require them.
-    visited: dict[str, int] = {}
-    order: list[str] = []
+class LLMProvider:
+    """Dual-backend LLM client supporting local LM Studio (primary) and Gemini REST (fallback)."""
 
-    def visit(node: str) -> bool:
-        state = visited.get(node)
-        if state == 1:
-            return False
-        if state == 2:
-            return True
-        visited[node] = 1
-        for dep in edges.get(node, []):
-            if not visit(dep):
-                return False
-        visited[node] = 2
-        order.append(node)
-        return True
+    def __init__(
+        self,
+        provider: str = "lmstudio",
+        lmstudio_url: str = DEFAULT_LMSTUDIO_URL,
+        lmstudio_model: str = DEFAULT_LMSTUDIO_MODEL,
+        gemini_api_key: str | None = None,
+        gemini_model: str = DEFAULT_GEMINI_MODEL,
+        timeout: int = DEFAULT_TIMEOUT,
+        max_tokens: int = DEFAULT_MAX_TOKENS,
+    ) -> None:
+        self.provider = provider
+        self.lmstudio_url = lmstudio_url
+        self.lmstudio_model = lmstudio_model
+        self.gemini_api_key = gemini_api_key or os.getenv("GEMINI_API_KEY")
+        self.gemini_model = gemini_model
+        self.timeout = timeout
+        self.max_tokens = max_tokens
 
-    for lid in local_ids:
-        if visited.get(lid) != 2:
-            if not visit(lid):
-                return None, True
-    return order, False
-
-
-def _validate_and_normalize(draft: dict, context: dict) -> tuple[dict | None, bool, list[str], list[str]]:
-    constraints = context["planning_constraints"]
-    allowed_task_types = set(constraints.get("allowed_task_types") or [])
-    allowed_languages = set(constraints.get("allowed_languages") or [])
-    forbidden_keywords = [k.lower() for k in constraints.get("forbidden_capability_keywords") or []]
-
-    known_ids = {t["mitre_id"] for t in context["techniques"]["primary"]}
-    known_ids |= {t["mitre_id"] for t in context["techniques"]["alternatives"]}
-
-    evidence_by_tech: dict[str, list[dict]] = {}
-    pattern_by_tech: dict[str, list[dict]] = {}
-    valid_chunk_ids: set[str] = set()
-    valid_pattern_ids: set[str] = set()
-    for group in ("primary", "alternatives"):
-        for t in context["techniques"][group]:
-            evidence_by_tech[t["mitre_id"]] = t["evidence"]
-            pattern_by_tech[t["mitre_id"]] = t["patterns"]
-            valid_chunk_ids |= {e["chunk_id"] for e in t["evidence"]}
-            valid_pattern_ids |= {p["pattern_id"] for p in t["patterns"]}
-
-            # Accept evidence references only from the context supplied to the model.
-    raw_tasks = draft.get("tasks")
-    if not isinstance(raw_tasks, list) or not raw_tasks:
-        return None, False, ["no_tasks_returned"], []
-
-    blocking: list[str] = []
-    advisories: list[str] = []
-    local_ids: list[str] = []
-    by_local: dict[str, dict] = {}
-
-    for idx, t in enumerate(raw_tasks, start=1):
-        if not isinstance(t, dict):
-            blocking.append(f"task_{idx}_not_object")
-            continue
-        local_id = str(t.get("local_id") or f"t{idx}")
-        if local_id in by_local:
-            local_id = f"{local_id}_{idx}"
-        local_ids.append(local_id)
-        by_local[local_id] = t
-
-    edges: dict[str, list[str]] = {}
-    for local_id, t in by_local.items():
-        if not t.get("title") or not isinstance(t.get("title"), str):
-            blocking.append(f"{local_id}: missing_title")
-        if t.get("task_type") not in allowed_task_types:
-            blocking.append(f"{local_id}: invalid_task_type={t.get('task_type')}")
-
-        maps_to = t.get("maps_to_techniques") or []
-        if not isinstance(maps_to, list) or not maps_to:
-            blocking.append(f"{local_id}: missing_maps_to_techniques")
+    def generate(self, system_prompt: str, user_prompt: str) -> dict[str, Any]:
+        if self.provider == "lmstudio":
+            try:
+                return self._call_lmstudio(system_prompt, user_prompt)
+            except Exception as e:
+                print(f"[WARN] LM Studio call failed: {e}. Falling back to Gemini...", file=sys.stderr)
+                return self._call_gemini(system_prompt, user_prompt)
+        elif self.provider == "gemini":
+            return self._call_gemini(system_prompt, user_prompt)
         else:
-            for mid in maps_to:
-                if mid not in known_ids:
-                    blocking.append(f"{local_id}: unknown_technique_reference={mid}")
+            raise ValueError(f"Unknown provider: {self.provider}")
 
-        language = t.get("language")
-        if language and allowed_languages and language not in allowed_languages:
-            blocking.append(f"{local_id}: disallowed_language={language}")
+    def _call_lmstudio(self, system_prompt: str, user_prompt: str) -> dict[str, Any]:
+        payload = {
+            "model": self.lmstudio_model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "temperature": 0.2,
+            "max_tokens": self.max_tokens,
+        }
+        resp = requests.post(self.lmstudio_url, json=payload, timeout=self.timeout)
+        if resp.status_code != 200:
+            raise RuntimeError(f"LM Studio error ({resp.status_code}): {resp.text[:400]}")
 
-        dep_list: list[str] = []
-        for dep in (t.get("depends_on") or []):
-            dep = str(dep)
-            if dep == local_id:
-                blocking.append(f"{local_id}: self_dependency")
-                continue
-            if dep not in by_local:
-                blocking.append(f"{local_id}: unknown_dependency_reference={dep}")
-                continue
-            dep_list.append(dep)
-        edges[local_id] = dep_list
+        resp_json = resp.json()
+        choices = resp_json.get("choices") or []
+        if not choices:
+            raise RuntimeError(f"LM Studio returned no choices: {resp_json}")
+        raw_text = choices[0].get("message", {}).get("content", "")
+        parsed = _parse_json_response(raw_text)
+        if parsed is None:
+            raise ValueError(f"Failed to parse JSON from LM Studio response:\n{raw_text[:500]}")
+        return parsed
 
-        haystack = " ".join(
-            [
-                str(t.get("title", "")),
-                str(t.get("purpose", "")),
-                " ".join(str(c) for c in (t.get("constraints") or [])),
-            ]
-        ).lower()
-        for kw in forbidden_keywords:
-            if kw in haystack:
-                advisories.append(f"{local_id}: possible_forbidden_capability_keyword={kw}")
+    def _call_gemini(self, system_prompt: str, user_prompt: str) -> dict[str, Any]:
+        if not self.gemini_api_key:
+            raise RuntimeError("GEMINI_API_KEY environment variable is required for Gemini fallback.")
 
-    if blocking:
-        return None, False, blocking, advisories
+        url = f"{DEFAULT_GEMINI_BASE_URL}/models/{self.gemini_model}:generateContent?key={self.gemini_api_key}"
+        payload = {
+            "systemInstruction": {"parts": [{"text": system_prompt}]},
+            "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
+            "generationConfig": {
+                "temperature": 0.2,
+                "responseMimeType": "application/json",
+                "maxOutputTokens": min(self.max_tokens, 8192),
+            },
+        }
+        resp = requests.post(url, json=payload, timeout=min(self.timeout, 120))
+        if resp.status_code != 200:
+            raise RuntimeError(f"Gemini API error ({resp.status_code}): {resp.text[:400]}")
 
-    order, has_cycle = _topo_order(local_ids, edges)
-    if has_cycle or order is None:
-        return None, False, ["dependency_cycle"], advisories
+        resp_json = resp.json()
+        candidates = resp_json.get("candidates") or []
+        if not candidates:
+            raise RuntimeError(f"Gemini returned no candidates: {resp_json}")
+        parts = candidates[0].get("content", {}).get("parts", [])
+        raw_text = "".join(p.get("text", "") for p in parts if isinstance(p, dict))
+        parsed = _parse_json_response(raw_text)
+        if parsed is None:
+            raise ValueError(f"Failed to parse JSON from Gemini response:\n{raw_text[:500]}")
+        return parsed
 
-    # The model's local IDs become stable IDs only after the dependency graph is valid.
-    canonical_map = {lid: f"TASK-{i:03d}" for i, lid in enumerate(order, start=1)}
-    tasks_out = []
-    coverage: dict[str, list[str]] = {}
 
-    for lid in order:
-        t = by_local[lid]
-        canon = canonical_map[lid]
-        maps_to = t.get("maps_to_techniques") or []
-        for mid in maps_to:
-            coverage.setdefault(mid, []).append(canon)
+class PlanValidator:
+    """Performs deterministic validation on generated task plans."""
 
-        given_refs = t.get("evidence_refs") or {}
-        chunk_refs = [c for c in (given_refs.get("attack_chunks") or []) if c in valid_chunk_ids]
-        pattern_refs = [p for p in (given_refs.get("patterns") or []) if p in valid_pattern_ids]
-        if not chunk_refs and not pattern_refs and maps_to:
-            # Retain a minimal traceable reference when the model omitted valid citations.
-            primary_mid = maps_to[0]
-            chunk_refs = [e["chunk_id"] for e in evidence_by_tech.get(primary_mid, [])[:1]]
-            pattern_refs = [p["pattern_id"] for p in pattern_by_tech.get(primary_mid, [])[:1]]
-            advisories.append(f"{canon}: auto_filled_evidence")
-
-        tasks_out.append(
-            {
-                "task_id": canon,
-                "title": t.get("title"),
-                "task_type": t.get("task_type"),
-                "purpose": t.get("purpose") or "",
-                "maps_to_techniques": maps_to,
-                "evidence_refs": {"attack_chunks": chunk_refs, "patterns": pattern_refs},
-                "depends_on": [canonical_map[d] for d in edges.get(lid, [])],
-                "inputs": t.get("inputs") or [],
-                "outputs": t.get("outputs") or [],
-                "language": t.get("language") or (sorted(allowed_languages)[0] if allowed_languages else None),
-                "constraints": t.get("constraints") or [],
-                "acceptance_criteria": t.get("acceptance_criteria") or [],
-            }
-        )
-
-    coverage_out = []
-    uncovered = []
-    for mid in [t["mitre_id"] for t in context["techniques"]["primary"]]:
-        task_ids = coverage.get(mid) or []
-        status = "covered" if task_ids else "uncovered"
-        if status == "uncovered":
-            uncovered.append(mid)
-        coverage_out.append({"mitre_id": mid, "status": status, "task_ids": task_ids})
-
-    if uncovered:
-        return None, False, [f"uncovered_primary_techniques={uncovered}"], advisories
-
-    plan = {
-        "tasks": tasks_out,
-        "execution_order": [canonical_map[l] for l in order],
-        "technique_coverage": coverage_out,
+    REQUIRED_TASK_KEYS = {
+        "task_id",
+        "task_type",
+        "suggested_filename",
+        "description",
+        "technique_ids",
+        "dependencies",
+        "provides",
+        "consumes",
+        "implementation_details",
+        "rag_retrieval_hints",
     }
-    return plan, True, [], advisories
+
+    def __init__(self, allowed_task_types: list[str], top_technique_ids: set[str]) -> None:
+        self.allowed_task_types = set(allowed_task_types)
+        self.top_technique_ids = top_technique_ids
+
+    def validate(self, plan: dict[str, Any]) -> tuple[bool, list[str]]:
+        errors: list[str] = []
+
+        if not isinstance(plan, dict):
+            return False, ["Plan must be a JSON object."]
+
+        raw_tasks = plan.get("tasks")
+        if not isinstance(raw_tasks, list) or not raw_tasks:
+            return False, ["Plan must contain a non-empty 'tasks' array."]
+
+        task_ids: set[str] = set()
+        task_map: dict[str, dict] = {}
+        provided_symbols_by_task: dict[str, set[str]] = {}
+
+        # 1. Schema Validation for each task
+        for idx, task in enumerate(raw_tasks, start=1):
+            if not isinstance(task, dict):
+                errors.append(f"Task index {idx} is not an object.")
+                continue
+
+            tid = task.get("task_id")
+            if not tid or not isinstance(tid, str):
+                errors.append(f"Task index {idx} missing valid 'task_id'.")
+                continue
+            tid = tid.strip()
+            if tid in task_ids:
+                errors.append(f"Duplicate task_id detected: '{tid}'.")
+            task_ids.add(tid)
+            task_map[tid] = task
+
+            missing_keys = self.REQUIRED_TASK_KEYS - set(task.keys())
+            if missing_keys:
+                errors.append(f"Task '{tid}' missing required keys: {sorted(missing_keys)}.")
+
+            # Vocabulary Validation
+            ttype = task.get("task_type")
+            if ttype not in self.allowed_task_types:
+                errors.append(f"Task '{tid}' invalid task_type '{ttype}'. Allowed: {sorted(self.allowed_task_types)}.")
+
+            # Record provided symbols
+            provides = task.get("provides")
+            if isinstance(provides, list):
+                provided_symbols_by_task[tid] = {str(s).strip() for s in provides if str(s).strip()}
+            else:
+                errors.append(f"Task '{tid}' 'provides' must be a list.")
+                provided_symbols_by_task[tid] = set()
+
+            if not isinstance(task.get("consumes"), list):
+                errors.append(f"Task '{tid}' 'consumes' must be a list.")
+
+            if not isinstance(task.get("dependencies"), list):
+                errors.append(f"Task '{tid}' 'dependencies' must be a list.")
+
+            if not isinstance(task.get("technique_ids"), list):
+                errors.append(f"Task '{tid}' 'technique_ids' must be a list.")
+
+            if not isinstance(task.get("rag_retrieval_hints"), list):
+                errors.append(f"Task '{tid}' 'rag_retrieval_hints' must be a list.")
+
+        if errors:
+            return False, errors
+
+        # 2. Acyclic DAG Verification (DFS Cycle Detection)
+        adj: dict[str, list[str]] = {tid: [] for tid in task_ids}
+        for tid, task in task_map.items():
+            deps = task.get("dependencies") or []
+            for dep in deps:
+                dep_str = str(dep).strip()
+                if dep_str not in task_ids:
+                    errors.append(f"Task '{tid}' specifies unknown dependency '{dep_str}'.")
+                elif dep_str == tid:
+                    errors.append(f"Task '{tid}' has self-dependency.")
+                else:
+                    adj[tid].append(dep_str)
+
+        visited: dict[str, int] = {}
+
+        def dfs(node: str, path: list[str]) -> bool:
+            visited[node] = 1
+            for neighbor in adj.get(node, []):
+                if visited.get(neighbor) == 1:
+                    cycle = " -> ".join(path + [neighbor])
+                    errors.append(f"Circular dependency detected in DAG: {cycle}.")
+                    return False
+                if visited.get(neighbor, 0) == 0:
+                    if not dfs(neighbor, path + [neighbor]):
+                        return False
+            visited[node] = 2
+            return True
+
+        for tid in task_ids:
+            if visited.get(tid, 0) == 0:
+                dfs(tid, [tid])
+
+        # 3. Interface Symbol Cross-Validation
+        for tid, task in task_map.items():
+            consumes = [str(s).strip() for s in (task.get("consumes") or []) if str(s).strip()]
+            deps = [str(d).strip() for d in (task.get("dependencies") or []) if str(d).strip() in task_ids]
+
+            available_symbols: set[str] = set()
+            for dep in deps:
+                available_symbols |= provided_symbols_by_task.get(dep, set())
+
+            for symbol in consumes:
+                if symbol not in available_symbols:
+                    errors.append(
+                        f"Task '{tid}' consumes symbol '{symbol}', but '{symbol}' is not provided by any "
+                        f"declared dependency ({deps})."
+                    )
+
+        # 4. TTP Coverage Check
+        covered_techniques: set[str] = set()
+        for task in task_map.values():
+            for mid in task.get("technique_ids") or []:
+                covered_techniques.add(str(mid).strip())
+
+        missing_ttps = self.top_technique_ids - covered_techniques
+        if missing_ttps:
+            errors.append(f"Plan fails TTP coverage. Missing top MITRE techniques: {sorted(missing_ttps)}.")
+
+        return len(errors) == 0, errors
+
+
+class PlannerEngine:
+    """Orchestrates context extraction, LLM generation, self-repair retry loop, and persistence."""
+
+    def __init__(
+        self,
+        context_builder: ContextBuilder,
+        llm_provider: LLMProvider,
+        max_retries: int = DEFAULT_MAX_RETRIES,
+        machine_out_dir: Path = Path("data/plans/machine_outs"),
+        human_out_dir: Path = Path("data/plans/human_outs"),
+    ) -> None:
+        self.context_builder = context_builder
+        self.llm_provider = llm_provider
+        self.max_retries = max_retries
+        self.machine_out_dir = machine_out_dir
+        self.human_out_dir = human_out_dir
+
+    def run(self) -> dict[str, Any]:
+        constraints = self.context_builder.load_constraints()
+        allowed_task_types = constraints.get("allowed_task_types", [])
+
+        feedback: list[str] | None = None
+        previous_plan: dict | None = None
+        stage1_stem = self.context_builder.stage1_path.stem
+        stem = f"PLAN_{stage1_stem}"
+        plan_id = stem
+
+        print(f"[*] Starting Stage 2 Planner for: {self.context_builder.stage1_path}")
+        print(f"[*] Primary provider: {self.llm_provider.provider}")
+
+        for attempt in range(1, self.max_retries + 1):
+            print(f"[*] Planner attempt {attempt}/{self.max_retries}...")
+            system_prompt, user_prompt, top_tech_ids = self.context_builder.build_prompts(
+                feedback=feedback, previous_plan=previous_plan
+            )
+
+            validator = PlanValidator(allowed_task_types, top_tech_ids)
+
+            try:
+                draft_plan = self.llm_provider.generate(system_prompt, user_prompt)
+            except Exception as e:
+                print(f"[!] Generation error on attempt {attempt}: {e}", file=sys.stderr)
+                if attempt == self.max_retries:
+                    raise
+                feedback = [f"Generation failed with error: {e}. Please return valid JSON."]
+                continue
+
+            if isinstance(draft_plan, dict):
+                draft_plan["plan_id"] = plan_id
+                draft_plan["stage1_ref"] = self.context_builder.stage1_path.name
+
+            valid, errors = validator.validate(draft_plan)
+            if valid:
+                print(f"[+] Task plan validated successfully on attempt {attempt}!")
+                self.persist(draft_plan, stem, status="valid")
+                return draft_plan
+            else:
+                print(f"[-] Validation failed on attempt {attempt}: {errors}")
+                feedback = errors
+                previous_plan = draft_plan
+
+        self.persist(previous_plan or {}, stem, status="invalid", errors=feedback)
+        raise RuntimeError(f"Planner failed to produce a valid plan after {self.max_retries} attempts: {feedback}")
+
+    def persist(
+        self,
+        plan: dict[str, Any],
+        stem: str,
+        status: str = "valid",
+        errors: list[str] | None = None,
+    ) -> None:
+        self.machine_out_dir.mkdir(parents=True, exist_ok=True)
+        self.human_out_dir.mkdir(parents=True, exist_ok=True)
+
+        machine_record = {
+            "plan_id": plan.get("plan_id", f"PLAN_{stem}"),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "status": status,
+            "stage1_ref": self.context_builder.stage1_path.name,
+            "source_query": plan.get("source_query", ""),
+            "tasks": plan.get("tasks", []),
+            "errors": errors or [],
+        }
+
+        machine_file = self.machine_out_dir / f"{stem}.jsonl"
+        with machine_file.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(machine_record, ensure_ascii=False) + "\n")
+        print(f"[+] Saved machine record to {machine_file}")
+
+        if status == "valid":
+            human_file = self.human_out_dir / f"{stem}.json"
+            human_file.write_text(json.dumps(plan, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            print(f"[+] Saved human summary to {human_file}")
+
+
+def _find_latest_stage1_file() -> Path:
+    human_outs = Path("data/human_outs")
+    if human_outs.exists():
+        candidates = sorted(human_outs.glob("*.json"))
+        if candidates:
+            return candidates[-1]
+
+    machine_outs = Path("data/machine_outs")
+    if machine_outs.exists():
+        candidates = sorted(machine_outs.glob("*.jsonl"))
+        if candidates:
+            return candidates[-1]
+
+    raise FileNotFoundError("No Stage 1 output files found in data/human_outs/ or data/machine_outs/.")
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Stage 2: plan implementation tasks from Stage 1 ATT&CK output")
-    parser.add_argument("stage1_output", help="Path to a Stage 1 data/human_outs/<timestamp>.json file")
-    parser.add_argument("--index-dir", default="artifacts/offense_index", help="Stage 1 index directory")
-    parser.add_argument("--pattern-library", default="data/patterns/code_patterns.jsonl", help="Vetted code pattern library JSONL")
-    parser.add_argument("--constraints-file", default="data/config/stage2_constraints.json", help="Deterministic planning constraints")
-    parser.add_argument("--evidence-per-technique", type=int, default=1, help="ATT&CK evidence chunks per technique")
-    parser.add_argument("--patterns-per-technique", type=int, default=2, help="Code patterns per technique")
-    parser.add_argument("--include-alternatives", action="store_true", help="Include Stage 1 alternatives as optional context")
-    parser.add_argument("--human-output-dir", default="data/plans/human_outs", help="Directory for pretty JSON plan output")
-    parser.add_argument("--machine-output-dir", default="data/plans/machine_outs", help="Directory for JSONL plan output and planning input")
-    parser.add_argument("--gen-model", default=None, help="Gemini generation model")
-    parser.add_argument("--temperature", type=float, default=0.2, help="Generation temperature")
-    parser.add_argument("--max-output-tokens", type=int, default=4000, help="Max output tokens")
-    parser.add_argument("--thinking-budget", type=int, default=0, help="Gemini thinking budget (0 uses model default)")
-    parser.add_argument("--max-repair-attempts", type=int, default=2, help="Max LLM planning attempts before giving up")
-    parser.add_argument("--debug", action="store_true", help="Include debug metadata in error output")
+    parser = argparse.ArgumentParser(description="HERMES Stage 2 Planner: Decompose ATT&CK into modular task plans.")
+    parser.add_argument(
+        "--stage1-input",
+        type=Path,
+        default=None,
+        help="Path to Stage 1 JSON file (defaults to latest in data/human_outs/).",
+    )
+    parser.add_argument(
+        "--provider",
+        choices=["lmstudio", "gemini"],
+        default="lmstudio",
+        help="LLM provider: lmstudio (default) or gemini.",
+    )
+    parser.add_argument(
+        "--lmstudio-url",
+        type=str,
+        default=DEFAULT_LMSTUDIO_URL,
+        help=f"LM Studio API URL (default: {DEFAULT_LMSTUDIO_URL}).",
+    )
+    parser.add_argument(
+        "--lmstudio-model",
+        type=str,
+        default=DEFAULT_LMSTUDIO_MODEL,
+        help=f"LM Studio model name (default: {DEFAULT_LMSTUDIO_MODEL}).",
+    )
+    parser.add_argument(
+        "--max-tokens",
+        type=int,
+        default=DEFAULT_MAX_TOKENS,
+        help=f"Maximum output tokens (default: {DEFAULT_MAX_TOKENS}).",
+    )
+    parser.add_argument(
+        "--timeout",
+        type=int,
+        default=DEFAULT_TIMEOUT,
+        help=f"Request timeout in seconds (default: {DEFAULT_TIMEOUT}).",
+    )
+    parser.add_argument(
+        "--max-retries",
+        type=int,
+        default=DEFAULT_MAX_RETRIES,
+        help=f"Max self-repair attempts (default: {DEFAULT_MAX_RETRIES}).",
+    )
+
     args = parser.parse_args()
 
-    stage1_path = Path(args.stage1_output)
-    stage1 = _load_stage1_output(stage1_path)
-    request_id = stage1_path.stem
+    stage1_file = args.stage1_input
+    if stage1_file is None:
+        stage1_file = _find_latest_stage1_file()
+        print(f"[*] Auto-selected latest Stage 1 input: {stage1_file}")
 
-    index_dir = Path(args.index_dir)
-    constraints = _load_constraints(Path(args.constraints_file))
-    patterns = _load_pattern_library(Path(args.pattern_library))
-
-    human_output_dir = Path(args.human_output_dir)
-    machine_output_dir = Path(args.machine_output_dir)
-    human_output_dir.mkdir(parents=True, exist_ok=True)
-    machine_output_dir.mkdir(parents=True, exist_ok=True)
-    stem = _timestamped_stem()
-
-    if not (stage1.get("top_techniques") or []):
-        payload = {
-            "schema_version": "1.0",
-            "plan_id": f"plan_{stem}",
-            "request_id": request_id,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "planning_status": "no_techniques",
-            "source_query": stage1.get("query"),
-            "tasks": [],
-            "execution_order": [],
-            "technique_coverage": [],
-        }
-        _write_jsonl_record(machine_output_dir / f"{stem}.jsonl", payload)
-        _write_pretty_json(human_output_dir / f"{stem}.json", payload)
-        print(str(human_output_dir / f"{stem}.json"))
-        return
-
-    context = _build_planning_context(
-        stage1=stage1,
-        index_dir=index_dir,
-        patterns=patterns,
-        constraints=constraints,
-        request_id=request_id,
-        include_alternatives=bool(args.include_alternatives),
-        evidence_per_technique=int(args.evidence_per_technique),
-        patterns_per_technique=int(args.patterns_per_technique),
+    context_builder = ContextBuilder(stage1_path=stage1_file)
+    llm_provider = LLMProvider(
+        provider=args.provider,
+        lmstudio_url=args.lmstudio_url,
+        lmstudio_model=args.lmstudio_model,
+        timeout=args.timeout,
+        max_tokens=args.max_tokens,
     )
-    # Persist the exact grounded context used for this plan for reproducibility.
-    _write_pretty_json(machine_output_dir / f"{stem}.input.json", context)
 
-    api_key = _env("GOOGLE_API_KEY") or _env("GEMINI_API_KEY")
-    if not api_key:
-        raise RuntimeError("Missing GOOGLE_API_KEY (or GEMINI_API_KEY)")
+    engine = PlannerEngine(
+        context_builder=context_builder,
+        llm_provider=llm_provider,
+        max_retries=args.max_retries,
+    )
 
-    base_url = _env("GEMINI_BASE_URL") or DEFAULT_BASE_URL
-    gen_model = args.gen_model or _env("GEMINI_GEN_MODEL") or DEFAULT_GEN_MODEL
-    thinking_budget = _resolve_thinking_budget(gen_model, args.thinking_budget)
-
-    plan = None
-    valid = False
-    violations: list[str] = []
-    advisories: list[str] = []
-    attempts_used = 0
-
-    for attempt in range(1, int(args.max_repair_attempts) + 1):
-        attempts_used = attempt
-        prompt = _build_prompt(context, violations if violations else None)
-        response_json = _call_gemini_raw(
-            prompt=prompt,
-            api_key=api_key,
-            base_url=base_url,
-            model=gen_model,
-            temperature=float(args.temperature),
-            max_output_tokens=int(args.max_output_tokens),
-            thinking_budget=thinking_budget,
-        )
-
-        try:
-            text = _extract_text(response_json)
-        except GenerationEmptyTextError as exc:
-            violations = [f"generation_empty_text: {exc}"]
-            continue
-
-        draft = _parse_json_response(text)
-        if draft is None:
-            violations = ["invalid_json_output"]
-            continue
-
-        plan, valid, violations, advisories = _validate_and_normalize(draft, context)
-        if valid:
-            break
-
-    # Always emit a machine-readable result, including an invalid plan and its violations.
-    planning_status = "valid" if valid else "invalid"
-    final_plan = {
-        "schema_version": "1.0",
-        "plan_id": f"plan_{stem}",
-        "request_id": request_id,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-        "planning_status": planning_status,
-        "scope": {
-            "environment": constraints.get("environment"),
-            "network_policy": constraints.get("network_policy"),
-            "implementation_mode": constraints.get("implementation_mode"),
-        },
-        "source_query": stage1.get("query"),
-        "tasks": plan["tasks"] if plan else [],
-        "execution_order": plan["execution_order"] if plan else [],
-        "technique_coverage": plan["technique_coverage"]
-        if plan
-        else [
-            {"mitre_id": t["mitre_id"], "status": "uncovered", "task_ids": []}
-            for t in context["techniques"]["primary"]
-        ],
-        "validation": {
-            "attempts_used": attempts_used,
-            "blocking_violations": violations if not valid else [],
-            "advisories": advisories,
-        },
-        "planner_metadata": {"model": gen_model, "prompt_version": "stage2-planner-v1"},
-    }
-
-    _write_jsonl_record(machine_output_dir / f"{stem}.jsonl", final_plan)
-    _write_pretty_json(human_output_dir / f"{stem}.json", final_plan)
-    print(str(human_output_dir / f"{stem}.json"))
+    engine.run()
 
 
 if __name__ == "__main__":
     main()
+

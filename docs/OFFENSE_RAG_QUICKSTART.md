@@ -21,7 +21,6 @@ Recommended repo layout:
 - [data/human_outs/](../data/human_outs)
 - [data/machine_outs/](../data/machine_outs)
 - [data/config/stage2_constraints.json](../data/config/stage2_constraints.json)
-- [data/patterns/code_patterns.jsonl](../data/patterns/code_patterns.jsonl)
 - [data/plans/](../data/plans)
 - [data/code_scripts/](../data/code_scripts)
 - [artifacts/offense_index/](../artifacts/offense_index)
@@ -166,7 +165,7 @@ The `.json` file is the human-friendly view; the `.jsonl` file is the machine-fr
 
 ## 6) Build a Stage 2 task plan
 
-`plan_tasks.py` takes the Stage 1 pretty JSON output and produces a dependency-ordered task plan. It enriches each technique with durable ATT&CK chunk references from the SQLite index, exact ATT&CK-ID pattern matches from `data/patterns/code_patterns.jsonl`, and constraints from `data/config/stage2_constraints.json`.
+`plan_tasks.py` takes the Stage 1 pretty JSON output and produces a dependency-ordered task plan. It enriches each technique with durable ATT&CK chunk references from the SQLite index and constraints from `data/config/stage2_constraints.json`.
 
 ```bash
 ./venv/bin/python plan_tasks.py \

@@ -27,7 +27,6 @@ file per plan task via a local Ollama model.
 | `data/human_outs/` | Pretty JSON outputs from `generate_offense_rag.py` for human review. |
 | `data/machine_outs/` | JSONL outputs from `generate_offense_rag.py` for machine ingestion. |
 | `data/config/stage2_constraints.json` | Deterministic policy and scope for Stage 2 planning. |
-| `data/patterns/code_patterns.jsonl` | Vetted, ATT&CK-mapped pattern records used as planner context. |
 | `data/plans/` | Stage 2 human-readable plans, machine-readable plans, and saved planning contexts. |
 | `data/code_scripts/` | Stage 3 generated per-task Python files and `manifest.jsonl`. |
 | `artifacts/offense_index/` | Primary hybrid index artifacts. |
