@@ -1,8 +1,0 @@
-Target Reconnaissance: Query public Git repository APIs to locate exposed configuration files (package.json, requirements.txt) associated with the target organization. Parse these files to extract namespace strings of dependencies that do not exist in public registries.
-Resource Procurement: Provision an external virtual private server to act as a listener for reverse shell connections.
-Payload Weaponization: Author a stager script. The script reads local system environment variables and initiates an outbound TCP connection to the external listener, piping standard input and output to a system shell (bash/sh).
-Delivery Mechanism: Embed the stager script within the installation lifecycle hooks (e.g., 'preinstall' or 'postinstall') of a standard package format.
-Infrastructure Staging: Publish the weaponized package to public index registries (npm, PyPI) using the exact internal namespace strings extracted during reconnaissance. Assign the package an artificially inflated semantic version number (e.g., 99.9.9).
-Initial Access: Target developers or automated CI/CD pipelines execute standard dependency resolution commands. The local package manager queries the public registry, prioritizes the malicious package due to the inflated version number, and downloads it to the internal environment.
-Execution: The local package manager automatically triggers the embedded lifecycle hooks upon download, executing the stager script locally with the permissions of the current user or service account.
-Collection and Exfiltration: The executing script collects environment variables containing cloud infrastructure API keys and transmits them over the outbound TCP connection to the external listener.
