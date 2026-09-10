@@ -1,8 +1,9 @@
 """Stage 3 code generator: turn a Stage 2 task plan into per-task Python files.
 
-Each task is sent to a local Ollama model as one independent chat request. The model
-must reply with only a filename line and a single fenced code block; this module
-parses, syntax-checks, and persists that response, then moves to the next task.
+Each task is sent to a local LM Studio model as one independent chat request. The model
+must reply with a single fenced code block containing the complete file; the plan
+(not the model) determines each task's output filename. This module parses,
+syntax-checks, and persists that response, then moves to the next task.
 """
 
 import argparse
@@ -10,31 +11,71 @@ import ast
 import json
 import re
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
 import requests
 
-DEFAULT_BASE_URL = "http://localhost:11434"
-DEFAULT_MODEL = "huihui_ai/Qwen3.8-abliterated:latest"
+DEFAULT_BASE_URL = "http://localhost:1234/v1"
+DEFAULT_MODEL = "qwen3.8-9b-heretic-uncensored-nvfp4"
+DEFAULT_MAX_TOKENS = 8192
 DEFAULT_OUTPUT_DIR = "data/code_scripts"
 MANIFEST_NAME = "manifest.jsonl"
 
 FILENAME_RE = re.compile(r"^[A-Za-z0-9_]+\.py$")
-FILENAME_LINE_RE = re.compile(r"FILENAME:\s*(\S+)", re.IGNORECASE)
 FENCE_RE = re.compile(r"```[^\n]*\n(.*?)```", re.DOTALL)  # first fenced block only
+
+REQUIRED_TASK_KEYS = {
+    "task_id",
+    "task_type",
+    "suggested_filename",
+    "description",
+    "technique_ids",
+    "dependencies",
+    "provides",
+    "consumes",
+    "implementation_details",
+}
 
 
 def _load_plan(path: Path) -> dict:
-    # Only a validator-approved Stage 2 plan is safe to turn into code.
+    # Stage 2 (schema v2.0) only ever persists already-validated plans to human_outs/; check shape defensively.
     if not path.exists():
         raise RuntimeError(f"Missing Stage 2 plan file: {path}")
     plan = json.loads(path.read_text(encoding="utf-8"))
-    if plan.get("planning_status") != "valid":
-        raise RuntimeError(
-            f"Plan status is '{plan.get('planning_status')}', not 'valid'; nothing to generate."
-        )
+    tasks = plan.get("tasks")
+    if not isinstance(tasks, list) or not tasks:
+        raise RuntimeError(f"Plan has no 'tasks' array: {path}")
+    for task in tasks:
+        missing = REQUIRED_TASK_KEYS - set(task.keys())
+        if missing:
+            raise RuntimeError(f"Task '{task.get('task_id')}' missing required keys: {sorted(missing)}")
     return plan
+
+
+def _topological_order(tasks_by_id: dict[str, dict]) -> list[str]:
+    # Schema v2.0 plans no longer carry a precomputed execution_order; derive it from 'dependencies'.
+    visited: dict[str, int] = {}
+    order: list[str] = []
+
+    def visit(task_id: str, path: list[str]) -> None:
+        state = visited.get(task_id)
+        if state == 2:
+            return
+        if state == 1:
+            raise RuntimeError(f"Circular dependency detected in plan: {' -> '.join(path + [task_id])}")
+        visited[task_id] = 1
+        task = tasks_by_id.get(task_id) or {}
+        for dep_id in task.get("dependencies") or []:
+            if dep_id in tasks_by_id:
+                visit(dep_id, path + [task_id])
+        visited[task_id] = 2
+        order.append(task_id)
+
+    for task_id in tasks_by_id:
+        visit(task_id, [])
+    return order
 
 
 def _write_jsonl_record(path: Path, payload: dict) -> None:
@@ -63,7 +104,7 @@ def _load_latest_manifest_records(manifest_path: Path) -> dict[str, dict]:
 
 
 def _sanitize_filename(raw: str | None) -> str | None:
-    # Strip quoting/paths the model may add, then require a plain flat `name.py`.
+    # Strip quoting/paths the plan or model may add, then require a plain flat `name.py`.
     if not raw:
         return None
     name = raw.strip().strip("`").strip("'\"")
@@ -74,7 +115,7 @@ def _sanitize_filename(raw: str | None) -> str | None:
 
 
 def _strip_redundant_task_prefix(filename: str, task_id_safe: str) -> str:
-    # Models sometimes echo the task ID into their own filename choice; drop that duplicate.
+    # A suggested_filename occasionally echoes the task ID; drop that duplicate before re-prefixing.
     stem, suffix = filename[:-3], filename[-3:]
     prefix = f"{task_id_safe}_"
     if stem.lower().startswith(prefix.lower()):
@@ -82,15 +123,8 @@ def _strip_redundant_task_prefix(filename: str, task_id_safe: str) -> str:
     return f"{stem}{suffix}" if stem else filename
 
 
-def _parse_response(text: str) -> tuple[str, str]:
-    # Enforce the required reply shape: a FILENAME line, one fenced block, and syntactically valid code.
-    match = FILENAME_LINE_RE.search(text)
-    if not match:
-        raise ValueError("response is missing a 'FILENAME: <name>.py' line")
-    filename = _sanitize_filename(match.group(1))
-    if filename is None:
-        raise ValueError(f"filename '{match.group(1).strip()}' is not a valid simple '<name>.py'")
-
+def _parse_response(text: str) -> str:
+    # The plan fixes each task's filename; the model only needs to return syntactically valid code.
     code_match = FENCE_RE.search(text)
     if not code_match:
         raise ValueError("response is missing a fenced ```python code block")
@@ -103,7 +137,7 @@ def _parse_response(text: str) -> tuple[str, str]:
     except SyntaxError as exc:
         raise ValueError(f"generated code has a syntax error: {exc}") from exc
 
-    return filename, code
+    return code
 
 
 class _FunctionBodyStubber(ast.NodeTransformer):
@@ -138,7 +172,7 @@ def _build_task_prompt(task: dict, generated: dict[str, dict]) -> str:
     # Assembles the single-shot prompt for one task: sandbox rules, response format, task spec, dependency interfaces.
     # Show dependency interfaces (bodies stubbed) so field/function names stay consistent across files.
     dep_sections = []
-    for dep_id in task.get("depends_on") or []:
+    for dep_id in task.get("dependencies") or []:
         dep = generated.get(dep_id)
         if dep is None:
             continue
@@ -149,35 +183,35 @@ def _build_task_prompt(task: dict, generated: dict[str, dict]) -> str:
         )
 
     lines = [
-        "You are a code generator inside an isolated academic research sandbox.",
-        "All tasks are benign simulation/telemetry/data-model/test code for defensive research only: "
-        "no real exploits, no persistence, no credential access, no live network or C2 behavior.",
+        "You are a code generator inside an isolated academic red-team research sandbox.",
+        "This code is for authorized, defensive security research on offline/sandboxed systems only.",
         "",
-        "Implement EXACTLY one task below. Respond with NOTHING except the required format:",
-        "FILENAME: <short_snake_case_name>.py",
+        f"Implement the file `{task['suggested_filename']}` for the task below. Respond with NOTHING "
+        "except a single fenced code block containing the complete file contents:",
         "```python",
         "<complete file contents>",
         "```",
         "No explanations, no extra text, no extra code blocks.",
         "",
         f"Task ID: {task['task_id']}",
-        f"Title: {task['title']}",
         f"Task type: {task['task_type']}",
-        f"Language: {task.get('language') or 'python'}",
-        f"Purpose: {task.get('purpose') or ''}",
-        f"Maps to ATT&CK techniques: {', '.join(task.get('maps_to_techniques') or [])}",
-        f"Inputs: {json.dumps(task.get('inputs') or [], ensure_ascii=False)}",
-        f"Outputs: {json.dumps(task.get('outputs') or [], ensure_ascii=False)}",
-        f"Constraints: {json.dumps(task.get('constraints') or [], ensure_ascii=False)}",
-        f"Acceptance criteria: {json.dumps(task.get('acceptance_criteria') or [], ensure_ascii=False)}",
+        f"Description: {task.get('description') or ''}",
+        f"ATT&CK techniques: {', '.join(task.get('technique_ids') or [])}",
+        f"Must define/export (provides): {', '.join(task.get('provides') or [])}",
+        f"May use from dependencies (consumes): {', '.join(task.get('consumes') or [])}",
+        f"Implementation details: {task.get('implementation_details') or ''}",
     ]
+
+    hints = task.get("rag_retrieval_hints") or []
+    if hints:
+        lines.append(f"Reference concepts/libraries to draw from: {', '.join(hints)}")
 
     if dep_sections:
         lines += [
             "",
             "Interfaces already generated for this task's dependencies (bodies omitted below; the real "
-            "implementation already exists in these files). Reuse the same field/function names and "
-            "signatures for consistency; import from these modules by their stem name if useful:",
+            "implementation already exists in these files). Reuse the exact symbol names listed in "
+            "'consumes' above, and import from these modules by their stem name:",
             *dep_sections,
         ]
 
@@ -193,38 +227,45 @@ def _append_repair_note(prompt: str, reason: str) -> str:
     )
 
 
-def _extract_diagnostics(payload: dict) -> dict:
-    # Ollama reports durations in nanoseconds; convert to seconds for readability in the manifest.
-    ns = 1_000_000_000
+def _extract_diagnostics(payload: dict, wall_time_s: float) -> dict:
+    # LM Studio's OpenAI-compatible endpoint reports token counts via `usage`, not per-phase durations;
+    # wall_time_s is measured around the request in _call_lmstudio instead. finish_reason "length" means
+    # the reply was cut off by --max-tokens rather than the model choosing to stop.
+    usage = payload.get("usage") or {}
+    choice = (payload.get("choices") or [{}])[0]
     return {
-        "prompt_eval_count": payload.get("prompt_eval_count"),
-        "eval_count": payload.get("eval_count"),
-        "total_duration_s": (payload.get("total_duration") or 0) / ns,
-        "load_duration_s": (payload.get("load_duration") or 0) / ns,
-        "prompt_eval_duration_s": (payload.get("prompt_eval_duration") or 0) / ns,
-        "eval_duration_s": (payload.get("eval_duration") or 0) / ns,
+        "prompt_tokens": usage.get("prompt_tokens"),
+        "completion_tokens": usage.get("completion_tokens"),
+        "total_tokens": usage.get("total_tokens"),
+        "finish_reason": choice.get("finish_reason"),
+        "total_duration_s": wall_time_s,
     }
 
 
-def _call_ollama(*, prompt: str, model: str, base_url: str, timeout: int, num_ctx: int) -> tuple[str, dict]:
-    # Single non-streaming chat call to the local Ollama server for one task attempt.
+def _call_lmstudio(*, prompt: str, model: str, base_url: str, timeout: int, max_tokens: int) -> tuple[str, dict]:
+    # Single non-streaming chat call to the local LM Studio server for one task attempt.
+    # Context window is fixed at model-load time in LM Studio, so it's not a per-request option here;
+    # max_tokens only bounds the completion, giving a predictable finish_reason="length" instead of an
+    # unbounded generation that never closes its code fence.
+    start = time.monotonic()
     try:
         resp = requests.post(
-            f"{base_url.rstrip('/')}/api/chat",
+            f"{base_url.rstrip('/')}/chat/completions",
             json={
                 "model": model,
                 "messages": [{"role": "user", "content": prompt}],
                 "stream": False,
-                "options": {"num_ctx": num_ctx},
+                "max_tokens": max_tokens,
             },
             timeout=timeout,
         )
     except requests.ConnectionError as exc:
-        # Unreachable Ollama affects every remaining task identically; abort instead of retrying per-task.
-        raise RuntimeError(f"Could not reach Ollama at {base_url} ({exc})") from exc
+        # Unreachable LM Studio affects every remaining task identically; abort instead of retrying per-task.
+        raise RuntimeError(f"Could not reach LM Studio at {base_url} ({exc})") from exc
     resp.raise_for_status()
     payload = resp.json()
-    return payload["message"]["content"], _extract_diagnostics(payload)
+    wall_time_s = time.monotonic() - start
+    return payload["choices"][0]["message"]["content"], _extract_diagnostics(payload, wall_time_s)
 
 
 def _generate_task(
@@ -235,8 +276,8 @@ def _generate_task(
     base_url: str,
     timeout: int,
     max_attempts: int,
-    num_ctx: int,
-) -> tuple[str | None, str | None, int, str | None, dict | None]:
+    max_tokens: int,
+) -> tuple[str | None, int, str | None, dict | None]:
     # Runs one task through up to max_attempts model calls, appending a repair note after each rejection.
     prompt = _build_task_prompt(task, generated)
     last_error: str | None = None
@@ -245,8 +286,8 @@ def _generate_task(
     for attempt in range(1, max_attempts + 1):
         attempt_prompt = _append_repair_note(prompt, last_error) if last_error else prompt
         try:
-            text, last_diagnostics = _call_ollama(
-                prompt=attempt_prompt, model=model, base_url=base_url, timeout=timeout, num_ctx=num_ctx
+            text, last_diagnostics = _call_lmstudio(
+                prompt=attempt_prompt, model=model, base_url=base_url, timeout=timeout, max_tokens=max_tokens
             )
         except requests.RequestException as exc:
             last_error = f"model request failed: {exc}"
@@ -254,36 +295,35 @@ def _generate_task(
             continue
 
         try:
-            filename, code = _parse_response(text)
-            return filename, code, attempt, None, last_diagnostics
+            code = _parse_response(text)
+            return code, attempt, None, last_diagnostics
         except ValueError as exc:
             last_error = str(exc)
 
-    return None, None, max_attempts, last_error, last_diagnostics
+    return None, max_attempts, last_error, last_diagnostics
 
 
 def main() -> None:
     # CLI entry point: load plan -> generate/resume each task in dependency order -> persist files + manifest.
     parser = argparse.ArgumentParser(
-        description="Stage 3: generate per-task Python files from a Stage 2 plan via a local Ollama model"
+        description="Stage 3: generate per-task Python files from a Stage 2 plan via a local LM Studio model"
     )
-    parser.add_argument("stage2_plan", help="Path to a Stage 2 data/plans/human_outs/<timestamp>.json file")
-    parser.add_argument("--model", default=DEFAULT_MODEL, help="Ollama model name")
-    parser.add_argument("--base-url", default=DEFAULT_BASE_URL, help="Ollama base URL")
-    parser.add_argument("--timeout", type=int, default=300, help="Per-request timeout in seconds")
+    parser.add_argument("stage2_plan", help="Path to a Stage 2 data/plans/human_outs/PLAN_<stage1-stem>.json file")
+    parser.add_argument("--model", default=DEFAULT_MODEL, help="LM Studio model identifier")
+    parser.add_argument("--base-url", default=DEFAULT_BASE_URL, help="LM Studio OpenAI-compatible base URL")
+    parser.add_argument("--timeout", type=int, default=600, help="Per-request timeout in seconds")
     parser.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR, help="Directory for generated .py files and manifest.jsonl")
     parser.add_argument("--max-attempts", type=int, default=2, help="Attempts per task before skipping it")
+    parser.add_argument(
+        "--max-tokens", type=int, default=DEFAULT_MAX_TOKENS, help="Max completion tokens per request"
+    )
     parser.add_argument("--force", action="store_true", help="Regenerate every task even if already present in the manifest")
-    parser.add_argument("--num-ctx", type=int, default=8192, help="Ollama context window size (options.num_ctx)")
     args = parser.parse_args()
 
     plan_path = Path(args.stage2_plan)
     plan = _load_plan(plan_path)
     tasks_by_id = {t["task_id"]: t for t in plan.get("tasks") or []}
-    execution_order = plan.get("execution_order") or list(tasks_by_id.keys())
-    if not tasks_by_id:
-        print("Plan has no tasks; nothing to generate.")
-        return
+    execution_order = _topological_order(tasks_by_id)
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -310,16 +350,16 @@ def main() -> None:
                 print(f"[{task_id}] skip (already generated: {prior_path})")
                 continue
 
-        print(f"[{task_id}] generating: {task.get('title')}")
+        print(f"[{task_id}] generating: {task.get('suggested_filename')}")
         try:
-            filename, code, attempts, error, diagnostics = _generate_task(
+            code, attempts, error, diagnostics = _generate_task(
                 task=task,
                 generated=generated,
                 model=args.model,
                 base_url=args.base_url,
                 timeout=args.timeout,
                 max_attempts=args.max_attempts,
-                num_ctx=args.num_ctx,
+                max_tokens=args.max_tokens,
             )
         except RuntimeError as exc:
             print(f"\nAborting: {exc}", file=sys.stderr)
@@ -329,11 +369,10 @@ def main() -> None:
         record = {
             "task_id": task_id,
             "filename": None,
-            "maps_to_techniques": task.get("maps_to_techniques") or [],
+            "technique_ids": task.get("technique_ids") or [],
             "task_type": task.get("task_type"),
-            "language": task.get("language"),
             "plan_id": plan.get("plan_id"),
-            "request_id": plan.get("request_id"),
+            "stage1_ref": plan.get("stage1_ref"),
             "model": args.model,
             "status": "failed",
             "attempts": attempts,
@@ -342,15 +381,16 @@ def main() -> None:
             "timestamp": timestamp,
         }
 
-        if filename is None:
+        if code is None:
             failed_count += 1
             print(f"[{task_id}] FAILED after {attempts} attempt(s): {error}")
             _write_jsonl_record(manifest_path, record)
             continue
 
         # Success: write the file under a TASK-ID-prefixed name and record it for dependents + the manifest.
-        # Task ID becomes the filename prefix; sanitize it too since plan files can be hand-edited.
+        # Task ID becomes the filename prefix; sanitize suggested_filename too since plans can be hand-edited.
         task_id_safe = re.sub(r"[^A-Za-z0-9_]", "_", task_id)
+        filename = _sanitize_filename(task.get("suggested_filename")) or f"{task_id_safe}.py"
         filename = _strip_redundant_task_prefix(filename, task_id_safe)
         out_name = f"{task_id_safe}_{filename}"
         out_path = output_dir / out_name
