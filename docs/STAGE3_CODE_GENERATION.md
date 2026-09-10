@@ -36,7 +36,8 @@ Useful options:
 - `--model`: LM Studio model identifier (check `GET /v1/models` on your server — LM Studio normalizes the
   HuggingFace repo name); default `qwen3.8-9b-heretic-uncensored-nvfp4`
 - `--base-url`: LM Studio OpenAI-compatible base URL; default `http://localhost:1234/v1`
-- `--timeout`: per-request timeout in seconds; default `300`
+- `--timeout`: per-request timeout in seconds; default `1200` (at ~10 t/s GPU-only, a full 8192-token reply
+  takes ~845s, so this leaves margin for a max-length generation)
 - `--output-dir`: destination for generated files and the manifest; default `data/code_scripts`
 - `--max-attempts`: model attempts per task before it is marked failed; default `2`
 - `--max-tokens`: max completion tokens per request; default `8192` (bounds a single reply so a task that

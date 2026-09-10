@@ -37,7 +37,7 @@ python generate_offense_rag.py "abuse wmi to execute payload remotely" --index-d
 python plan_tasks.py data/human_outs/<stage1-timestamp>.json --index-dir artifacts/offense_index
 
 # Stage 3: generate per-task Python files from a Stage 2 plan (local LM Studio)
-python generate_code.py data/plans/human_outs/<stage2-timestamp>.json --timeout 1800
+python generate_code.py data/plans/human_outs/<stage2-timestamp>.json --timeout 1200
 
 # Evaluation
 python eval_offense_retrieval.py --cases data/eval/eval_cases.jsonl --index-dir artifacts/offense_index
@@ -45,8 +45,10 @@ python eval_offense_generation.py --cases data/eval/eval_cases.jsonl --index-dir
 python sweep_offense_retrieval_fast.py   # grid search over vector_k/bm25_k/lexical_weight
 ```
 
-- `generate_code.py --timeout` defaults to 600s; raise it if a task times out, but generation should be much
-  faster now that Stage 3 runs GPU-only through LM Studio.
+- `generate_code.py --timeout` defaults to 1200s; raise it if a task times out. At GPU-only speeds
+  (~10 t/s) a full `--max-tokens` (8192) reply takes ~845s, so the 1200s default leaves margin even for a
+  max-length generation — a shorter default would time out long generations before the token cap could cut
+  them cleanly.
 - `--force` on `generate_code.py` ignores the manifest and regenerates every task from scratch; without it,
   already-generated tasks (per `manifest.jsonl`) are skipped and reused as dependency context.
 - Stage 3 requires a local LM Studio server (OpenAI-compatible API) at `http://localhost:1234/v1` with a

@@ -311,7 +311,7 @@ def main() -> None:
     parser.add_argument("stage2_plan", help="Path to a Stage 2 data/plans/human_outs/PLAN_<stage1-stem>.json file")
     parser.add_argument("--model", default=DEFAULT_MODEL, help="LM Studio model identifier")
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL, help="LM Studio OpenAI-compatible base URL")
-    parser.add_argument("--timeout", type=int, default=600, help="Per-request timeout in seconds")
+    parser.add_argument("--timeout", type=int, default=1200, help="Per-request timeout in seconds")
     parser.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR, help="Directory for generated .py files and manifest.jsonl")
     parser.add_argument("--max-attempts", type=int, default=2, help="Attempts per task before skipping it")
     parser.add_argument(
