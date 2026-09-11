@@ -19,12 +19,13 @@ import requests
 
 DEFAULT_BASE_URL = "http://localhost:1234/v1"
 DEFAULT_MODEL = "qwen3.8-9b-heretic-uncensored-nvfp4"
-DEFAULT_MAX_TOKENS = 8192
+DEFAULT_MAX_TOKENS = 16384
 DEFAULT_OUTPUT_DIR = "data/code_scripts"
 MANIFEST_NAME = "manifest.jsonl"
 
 FILENAME_RE = re.compile(r"^[A-Za-z0-9_]+\.py$")
 FENCE_RE = re.compile(r"```[^\n]*\n(.*?)```", re.DOTALL)  # first fenced block only
+OPEN_FENCE_RE = re.compile(r"```[^\n]*\n(.*)", re.DOTALL)  # fallback: opening fence with no closing fence (truncated reply)
 
 REQUIRED_TASK_KEYS = {
     "task_id",
@@ -123,19 +124,37 @@ def _strip_redundant_task_prefix(filename: str, task_id_safe: str) -> str:
     return f"{stem}{suffix}" if stem else filename
 
 
+class _ResponseRejected(ValueError):
+    """A response failed validation; carries the best-effort code text so a final rejection can still be saved."""
+
+    def __init__(self, message: str, code: str | None = None):
+        super().__init__(message)
+        self.code = code
+
+
+def _best_effort_code(text: str) -> str | None:
+    # Used only when the final attempt is rejected, to still hand the model's actual output to the caller
+    # (e.g. an unclosed fence from hitting --max-tokens) instead of discarding it with just the error string.
+    match = OPEN_FENCE_RE.search(text)
+    if not match:
+        return None
+    code = match.group(1).strip()
+    return code or None
+
+
 def _parse_response(text: str) -> str:
     # The plan fixes each task's filename; the model only needs to return syntactically valid code.
     code_match = FENCE_RE.search(text)
     if not code_match:
-        raise ValueError("response is missing a fenced ```python code block")
+        raise _ResponseRejected("response is missing a fenced ```python code block", code=_best_effort_code(text))
     code = code_match.group(1).strip()
     if not code:
-        raise ValueError("fenced code block is empty")
+        raise _ResponseRejected("fenced code block is empty")
 
     try:
         ast.parse(code)
     except SyntaxError as exc:
-        raise ValueError(f"generated code has a syntax error: {exc}") from exc
+        raise _ResponseRejected(f"generated code has a syntax error: {exc}", code=code) from exc
 
     return code
 
@@ -277,11 +296,14 @@ def _generate_task(
     timeout: int,
     max_attempts: int,
     max_tokens: int,
-) -> tuple[str | None, int, str | None, dict | None]:
+) -> tuple[str | None, int, str | None, dict | None, str | None]:
     # Runs one task through up to max_attempts model calls, appending a repair note after each rejection.
+    # Returns (code, attempts, error, diagnostics, rejected_code) — rejected_code is the last attempt's
+    # best-effort text (set only when every attempt was rejected) so the caller can still persist it for review.
     prompt = _build_task_prompt(task, generated)
     last_error: str | None = None
     last_diagnostics: dict | None = None
+    last_rejected_code: str | None = None
 
     for attempt in range(1, max_attempts + 1):
         attempt_prompt = _append_repair_note(prompt, last_error) if last_error else prompt
@@ -296,11 +318,12 @@ def _generate_task(
 
         try:
             code = _parse_response(text)
-            return code, attempt, None, last_diagnostics
-        except ValueError as exc:
+            return code, attempt, None, last_diagnostics, None
+        except _ResponseRejected as exc:
             last_error = str(exc)
+            last_rejected_code = exc.code
 
-    return None, max_attempts, last_error, last_diagnostics
+    return None, max_attempts, last_error, last_diagnostics, last_rejected_code
 
 
 def main() -> None:
@@ -313,7 +336,7 @@ def main() -> None:
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL, help="LM Studio OpenAI-compatible base URL")
     parser.add_argument("--timeout", type=int, default=1200, help="Per-request timeout in seconds")
     parser.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR, help="Directory for generated .py files and manifest.jsonl")
-    parser.add_argument("--max-attempts", type=int, default=2, help="Attempts per task before skipping it")
+    parser.add_argument("--max-attempts", type=int, default=3, help="Attempts per task before skipping it")
     parser.add_argument(
         "--max-tokens", type=int, default=DEFAULT_MAX_TOKENS, help="Max completion tokens per request"
     )
@@ -352,7 +375,7 @@ def main() -> None:
 
         print(f"[{task_id}] generating: {task.get('suggested_filename')}")
         try:
-            code, attempts, error, diagnostics = _generate_task(
+            code, attempts, error, diagnostics, rejected_code = _generate_task(
                 task=task,
                 generated=generated,
                 model=args.model,
@@ -364,6 +387,13 @@ def main() -> None:
         except RuntimeError as exc:
             print(f"\nAborting: {exc}", file=sys.stderr)
             sys.exit(1)
+
+        # Task ID becomes the filename prefix; sanitize suggested_filename too since plans can be hand-edited.
+        # Computed regardless of outcome: the success path writes to it directly, the failure path prefixes it.
+        task_id_safe = re.sub(r"[^A-Za-z0-9_]", "_", task_id)
+        filename = _sanitize_filename(task.get("suggested_filename")) or f"{task_id_safe}.py"
+        filename = _strip_redundant_task_prefix(filename, task_id_safe)
+        out_name = f"{task_id_safe}_{filename}"
 
         timestamp = datetime.now(timezone.utc).isoformat()
         record = {
@@ -378,21 +408,24 @@ def main() -> None:
             "attempts": attempts,
             "error": error,
             "diagnostics": diagnostics,
+            "rejected_code_file": None,
             "timestamp": timestamp,
         }
 
         if code is None:
             failed_count += 1
             print(f"[{task_id}] FAILED after {attempts} attempt(s): {error}")
+            if rejected_code is not None:
+                # Last attempt's code, saved for a future correction pass to pick up and re-submit to the model.
+                # "incorrect_" prefix keeps it out of the resume/skip check (which only looks for "generated" status).
+                incorrect_path = output_dir / f"incorrect_{out_name}"
+                incorrect_path.write_text(rejected_code + "\n", encoding="utf-8")
+                record["rejected_code_file"] = str(incorrect_path)
+                print(f"[{task_id}] saved rejected code to {incorrect_path}")
             _write_jsonl_record(manifest_path, record)
             continue
 
         # Success: write the file under a TASK-ID-prefixed name and record it for dependents + the manifest.
-        # Task ID becomes the filename prefix; sanitize suggested_filename too since plans can be hand-edited.
-        task_id_safe = re.sub(r"[^A-Za-z0-9_]", "_", task_id)
-        filename = _sanitize_filename(task.get("suggested_filename")) or f"{task_id_safe}.py"
-        filename = _strip_redundant_task_prefix(filename, task_id_safe)
-        out_name = f"{task_id_safe}_{filename}"
         out_path = output_dir / out_name
         out_path.write_text(code + "\n", encoding="utf-8")
         generated[task_id] = {"filename": out_name, "code": code}
