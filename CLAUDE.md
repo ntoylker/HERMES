@@ -34,7 +34,7 @@ python query_offense_index.py "abuse wmi to execute payload remotely" --index-di
 python generate_offense_rag.py "abuse wmi to execute payload remotely" --index-dir artifacts/offense_index
 
 # Stage 2: turn a Stage 1 output into a validated task plan
-python plan_tasks.py data/human_outs/<stage1-timestamp>.json --index-dir artifacts/offense_index
+python plan_tasks.py --stage1-input data/human_outs/<stage1-timestamp>.json
 
 # Stage 3: generate per-task Python files from a Stage 2 plan (local LM Studio)
 python generate_code.py data/plans/human_outs/<stage2-timestamp>.json --timeout 1200
@@ -97,15 +97,21 @@ empty retrieval or Gemini failure.
 
 ### Stage 2 (`plan_tasks.py`)
 
-Takes a Stage 1 output and asks Gemini to decompose techniques into implementation-neutral tasks with
-`local_id`, `depends_on`, and `evidence_refs`. The model's JSON is never trusted structurally — a
-deterministic validator checks `task_type`/`language` against `data/config/stage2_constraints.json`,
-resolves `depends_on` and topologically orders tasks (cycle = blocking violation), filters `evidence_refs`
-to IDs actually present in the supplied context, and requires every primary Stage 1 technique to be
-*covered* by at least one task or the whole plan is invalid. `forbidden_capability_keywords`
-(persistence, credential_access, evasion, etc.) are scanned as a **non-blocking advisory only**, not an
-automatic rejection. Canonical `TASK-00N` IDs are assigned only after validation passes. Always persists a
-result (`planning_status` ∈ `valid`/`invalid`/`no_techniques`) so Stage 3 can gate on that field alone.
+Takes a Stage 1 output and asks a dual-backend LLM (local LM Studio by default, falling back to Gemini on
+failure, or Gemini directly via `--provider gemini`) to decompose top ATT&CK techniques directly into
+tasks — the model assigns each task's own final `TASK_NNN`-style `task_id`, `task_type`,
+`suggested_filename`, `technique_ids`, `dependencies`, `provides`/`consumes` symbol contract,
+`implementation_details`, and `rag_retrieval_hints`. The model's JSON is never trusted structurally — a
+deterministic validator checks required keys and `task_type` against
+`data/config/stage2_constraints.json`'s `allowed_task_types`, detects dependency cycles via DFS (blocking),
+cross-validates that every `consumes` symbol is `provides`d by a declared dependency, and requires every
+Stage 1 top/primary technique to be covered by at least one task's `technique_ids` or the whole plan is
+invalid. There is no `evidence_refs` field, no `forbidden_capability_keywords` scan, and no canonical-ID
+remapping step in the current schema (v2.0) — the model's own task IDs are persisted as-is. On failure,
+validation errors and the previous draft are fed back for up to `--max-retries` attempts. Always appends a
+machine record (`status` ∈ `valid`/`invalid`) to `data/plans/machine_outs/`; the human-readable plan under
+`data/plans/human_outs/` is written only when validation succeeds, so its existence — not a
+`planning_status` field — is what gates Stage 3.
 
 ### Stage 3 (`generate_code.py`)
 

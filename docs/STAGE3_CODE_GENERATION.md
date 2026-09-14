@@ -39,8 +39,8 @@ Useful options:
 - `--timeout`: per-request timeout in seconds; default `1200` (at ~10 t/s GPU-only, a full 8192-token reply
   takes ~845s, so this leaves margin for a max-length generation)
 - `--output-dir`: destination for generated files and the manifest; default `data/code_scripts`
-- `--max-attempts`: model attempts per task before it is marked failed; default `2`
-- `--max-tokens`: max completion tokens per request; default `8192` (bounds a single reply so a task that
+- `--max-attempts`: model attempts per task before it is marked failed; default `3`
+- `--max-tokens`: max completion tokens per request; default `16384` (bounds a single reply so a task that
   never closes its code fence fails fast with `finish_reason: "length"` instead of silently consuming the
   model's whole context)
 - `--force`: regenerate every task even if already marked `"generated"` in the manifest

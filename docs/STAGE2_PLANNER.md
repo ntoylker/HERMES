@@ -1,90 +1,120 @@
 # Stage 2 Task Planner
 
-`plan_tasks.py` turns a Stage 1 ATT&CK technique-linking result into an ordered, evidence-grounded task plan. The planner proposes implementation-neutral tasks for benign simulations, telemetry, interfaces, and tests; it does not generate source code.
+`plan_tasks.py` turns a Stage 1 ATT&CK technique-linking result into a validated, per-task implementation
+plan. The model assigns each task's final `task_id`, dependencies, and symbol-level interface
+(`provides`/`consumes`) directly; a deterministic validator checks the draft and drives a self-repair retry
+loop, but it does not renumber tasks or compute a separate execution order — that is left to Stage 3.
 
 ## Inputs
 
-The required positional input is a pretty JSON result created by `generate_offense_rag.py`, normally under `data/human_outs/`.
+The input is a Stage 1 JSON result created by `generate_offense_rag.py` (normally under
+`data/human_outs/`), passed via `--stage1-input`. If omitted, the planner auto-selects the
+lexicographically-latest file in `data/human_outs/*.json`, falling back to `data/machine_outs/*.jsonl`.
 
-The planner uses these Stage 1 fields:
+From that file the planner reads:
 
-- `query`
-- `top_techniques` as the required primary techniques
-- `alternatives` only when `--include-alternatives` is set
+- `query`, `summary`
+- `decomposition.sub_queries` (or, if absent, `parts[].id`/`parts[].text`) — shown to the model as
+  "Attack Phases" context, not otherwise consumed
+- `top_techniques` (plus `parts[].top_techniques`, merged) as the **required** primary technique set; if
+  still empty, the first 3 of each part's `retrieved_techniques` are used as a fallback
+- `alternatives` (plus `parts[].alternatives`, merged) as **optional** supporting context
 
-Both lists are already filtered by `generate_offense_rag.py`'s citation-groundedness validator; any technique with unverifiable citations is dropped before Stage 1 output is written, so the planner never re-checks citations itself. The Stage 1 `citation_validation` audit key is not consumed by the planner. If the query was decomposed into multiple parts, `top_techniques`/`alternatives` are already merged and deduplicated across parts (citations re-prefixed as `"Q<n>:S<i>"`); the planner does not consume `citations`, `decomposition`, or `parts` either way.
+Alternatives are always included in the prompt (there is no flag to exclude them) but are never required
+for coverage and never independently drive task creation.
 
-For each selected technique, it obtains additional context from two local sources:
+## Evidence
 
-1. `artifacts/offense_index/offense_index.sqlite`: one or more ATT&CK chunks, selected with the technique description first, then the overview. This supplies persistent `chunk_id` evidence references rather than Stage 1's run-specific `S1`, `S2`, citation labels.
-
-The exact planning context given to the model is written to `data/plans/machine_outs/<timestamp>.input.json`.
+For every top + alternative technique ID, `fetch_attack_evidence` queries `chunks` in
+`artifacts/offense_index/offense_index.sqlite` (hardcoded path, not a CLI option), returning up to 3 chunks
+per technique (`technique_description` chunks first, then `technique_overview`, then everything else),
+each truncated to 800 characters. Top techniques get their evidence text inlined in the prompt; alternative
+techniques are listed by ID/name only.
 
 ## Constraints
 
-`data/config/stage2_constraints.json` declares the planning environment, network policy, implementation mode, allowed task types, allowed languages, and review keywords.
-
-Allowed task types and languages are included in the model prompt and enforced by the Python validator. The environment, network policy, and implementation mode are persisted in the plan's `scope`. `forbidden_capability_keywords` are recorded as advisories for human review when found in a task's title, purpose, or constraints; they do not independently reject a plan.
+`data/config/stage2_constraints.json` (hardcoded path, not a CLI option) is schema v2.0 and currently
+supplies only `allowed_task_types`, `target_language`, and `min_python_version` — all three are read into
+the prompt and `allowed_task_types` is enforced by the validator. Its `environment` and `schema_version`
+keys exist but are not consumed anywhere; the "Environment" line shown to the model is a hardcoded string,
+not read from this file. There is no `forbidden_capability_keywords` list, network-policy field, or
+implementation-mode field in the current schema.
 
 ## Planning Flow
 
-1. Load the Stage 1 result and planning constraints.
-2. Build per-technique context from the SQLite ATT&CK index and exact-ID pattern matches.
-3. Ask Gemini for a JSON draft containing locally named tasks and dependencies.
-4. Validate and normalize the draft deterministically.
-5. On a blocking validation failure, provide the violations to Gemini and retry up to `--max-repair-attempts` times.
-6. Persist the canonical plan and its planning context.
+1. Load the Stage 1 result and `stage2_constraints.json`.
+2. Build per-technique evidence from the SQLite ATT&CK index.
+3. Call the configured LLM provider (`--provider`, default `lmstudio`) for a single JSON draft. LM Studio
+   failures automatically fall back to Gemini (`GEMINI_API_KEY` required); `--provider gemini` uses Gemini
+   directly.
+4. Validate the draft deterministically (see below).
+5. On a failed validation, feed the errors and the previous draft back to the model and retry, up to
+   `--max-retries` attempts (default 3). If every attempt fails, the run persists an `invalid` machine
+   record and then raises — the process exits non-zero.
+6. On success, persist the plan.
 
-The validator checks:
+The validator (`PlanValidator.validate`) checks, in order:
 
-- allowed task types and languages
-- known primary or optional-alternative technique IDs
-- known task dependency references and dependency cycles
-- coverage of every primary technique
-- evidence references against the context supplied to the model
+1. **Schema** — `tasks` is a non-empty list; each task has a unique string `task_id` and all of
+   `task_type`, `suggested_filename`, `description`, `technique_ids`, `dependencies`, `provides`,
+   `consumes`, `implementation_details`, `rag_retrieval_hints`; `task_type` is one of
+   `allowed_task_types`. Any schema error short-circuits the remaining checks for that attempt.
+2. **Acyclic DAG** — every `dependencies` entry resolves to a known `task_id` (no self-deps), verified with
+   a DFS cycle check.
+3. **Symbol contract** — every name in a task's `consumes` must appear in the `provides` list of at least
+   one of its declared `dependencies`.
+4. **TTP coverage** — the union of every task's `technique_ids` must be a superset of the Stage 1 **top**
+   technique IDs (alternatives are not required to be covered).
 
-The model provides local task IDs such as `t1`. The validator applies the final topological ordering, assigns canonical `TASK-001`-style IDs, and rewrites dependency references to those canonical IDs. When a task cites no valid ATT&CK chunk or pattern, the validator fills one available evidence reference for its first mapped technique and records an advisory.
+There is no `evidence_refs` field, no per-task language field, no `forbidden_capability_keywords` scan, and
+no canonical-ID remapping step — the model's own `TASK_NNN`-style `task_id` values are used as-is in the
+persisted plan.
 
 ## Run the Planner
 
-Gemini generation requires `GOOGLE_API_KEY` or `GEMINI_API_KEY`; the planner uses `GEMINI_GEN_MODEL` when set, otherwise `gemini-2.5-pro`.
-
 ```bash
-./venv/bin/python plan_tasks.py \
-  data/human_outs/<stage1-timestamp>.json \
-  --index-dir artifacts/offense_index
+python plan_tasks.py --stage1-input data/human_outs/<stage1-timestamp>.json
 ```
 
-Useful options:
+Omit `--stage1-input` to auto-select the latest Stage 1 output.
 
-- `--constraints-file`: planning policy JSON location; default `data/config/stage2_constraints.json`
-- `--evidence-per-technique`: ATT&CK chunks included per technique; default `1`
-- `--include-alternatives`: add Stage 1 alternatives as optional planning context
-- `--max-repair-attempts`: number of model attempts after validation failures; default `2`
-- `--max-output-tokens`: model output budget; default `4000`
+Options:
+
+- `--provider {lmstudio,gemini}`: LLM backend; default `lmstudio` (falls back to Gemini on failure)
+- `--lmstudio-url`: LM Studio chat-completions URL; default `http://localhost:1234/v1/chat/completions`
+- `--lmstudio-model`: model name sent to LM Studio; default `local-model`
+- `--max-tokens`: max completion tokens; default `16384`
+- `--timeout`: per-request timeout in seconds; default `600` (Gemini calls are additionally capped at 120s)
+- `--max-retries`: self-repair attempts; default `3`
+
+`--index-dir`, `--constraints-file`, `--evidence-per-technique`, `--include-alternatives`,
+`--max-repair-attempts`, and `--max-output-tokens` do not exist on this script.
 
 ## Output Contract
 
-Each execution creates three timestamped artifacts:
+Each run touches exactly two files, both named after the **Stage 1 input's** filename stem (not a fresh
+timestamp for the planner run itself), so rerunning the planner against the same Stage 1 file appends to
+the same machine record rather than creating new artifacts:
 
-- `data/plans/human_outs/<timestamp>.json`: formatted canonical plan
-- `data/plans/machine_outs/<timestamp>.jsonl`: single-line machine-readable canonical plan
-- `data/plans/machine_outs/<timestamp>.input.json`: persisted model context for reproducibility
+- `data/plans/machine_outs/PLAN_<stage1-stem>.jsonl` — always appended to (one line per attempted run),
+  regardless of outcome. Each line is `{plan_id, created_at, status, stage1_ref, source_query, tasks,
+  errors}` with `status` ∈ `valid`/`invalid`.
+- `data/plans/human_outs/PLAN_<stage1-stem>.json` — written (overwritten) **only when `status == "valid"`**.
+  Its content is exactly the model's validated draft: `{plan_id, source_query, stage1_ref, tasks: [...]}`.
+  There is no `planning_status`, `scope`, `execution_order`, `technique_coverage`, or `validation` field —
+  the file simply does not exist for an invalid plan, and that absence is what gates Stage 3, not a status
+  field inside it.
 
-The canonical plan includes:
-
-- `planning_status`: `valid`, `invalid`, or `no_techniques`
-- `scope`: the environment, network, and implementation constraints used for planning
-- `tasks`: normalized tasks with canonical IDs, inputs, outputs, dependencies, acceptance criteria, and ATT&CK/pattern evidence references
-- `execution_order`: a dependency-safe order of canonical task IDs
-- `technique_coverage`: the tasks covering each primary ATT&CK technique
-- `validation`: repair-attempt count, blocking violations when invalid, and non-blocking advisories
-
-An invalid plan is still persisted with an empty task list, `uncovered` primary techniques, and the final blocking validation violations. This lets downstream code reject it without parsing model text.
+No `.input.json` reproducibility dump of the model context is written.
 
 ## Relationship to Stage 1
 
-Stage 1 answers which ATT&CK techniques describe a query. Stage 2 uses those techniques as the required coverage set and produces a structured task plan with durable evidence references. The planner does not rerank retrieval results or modify the Stage 1 result.
+Stage 1 answers which ATT&CK techniques describe a query. Stage 2 uses the top techniques as the required
+coverage set and produces a task plan with each task's own `technique_ids`. The planner does not rerank
+retrieval results or modify the Stage 1 result.
 
 ## Relationship to Stage 3
-Stage 3 ([STAGE3_CODE_GENERATION.md](STAGE3_CODE_GENERATION.md)) consumes a valid Stage 2 plan and generates one Python file per task.
+
+Stage 3 ([STAGE3_CODE_GENERATION.md](STAGE3_CODE_GENERATION.md)) loads the human-readable plan directly,
+re-derives its own execution order from each task's `dependencies` via topological sort (it does not read
+or expect a precomputed `execution_order`), and generates one Python file per task.
