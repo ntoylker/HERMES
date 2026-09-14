@@ -8,10 +8,12 @@ This file is kept as a legacy reference. The canonical, current instructions liv
 2. `build_offense_index.py` builds `artifacts/offense_index/offense_index.sqlite`, `artifacts/offense_index/embeddings.npy`, and `artifacts/offense_index/index_meta.json` using a hosted embedding provider.
 3. `query_offense_index.py` runs hybrid retrieval over SQLite FTS5 plus vector embeddings and caches query embeddings in `cache/query_cache.sqlite`.
 4. `generate_offense_rag.py` retrieves supporting chunks, asks Gemini to produce a cited answer, and writes outputs to `data/human_outs/<timestamp>.json` and `data/machine_outs/<timestamp>.jsonl`.
-5. `plan_tasks.py` reads the Stage 1 pretty JSON output, resolves durable ATT&CK evidence from SQLite, then writes a validated task plan under `data/plans/`.
+5. `plan_tasks.py` reads the Stage 1 pretty JSON output, enriches the model prompt with technique-level ATT&CK chunk text from SQLite (without persisting any chunk-level evidence reference into the plan itself), then writes a validated task plan under `data/plans/`.
 
 ## Notes
 
 - The retrieval defaults are standardized elsewhere in the repo; use [RETRIEVAL_CONFIG.md](RETRIEVAL_CONFIG.md) as the source of truth.
 - `hosted_embeddings.py` is a shared helper module and is not run directly.
-- `eval_offense_retrieval.py` is the batch evaluation entry point for `data/eval/eval_cases.jsonl`. -> If you encounter any problems with unicode format or anything relevant, go to line `query_offense_index.py:316` and change `ensure_ascii=True` to `False` or otherwise.
+- `eval_offense_retrieval.py` is the batch evaluation entry point for `data/eval/eval_cases.jsonl`.
+- `query_offense_index.py`'s `--json` output path (`query_offense_index.py:316`) serializes with
+  `ensure_ascii=True`, so non-ASCII characters come out as `\uXXXX` escapes rather than raw UTF-8.

@@ -81,7 +81,8 @@ export AZURE_OPENAI_API_VERSION="2024-02-15-preview"
 export EMBED_PROVIDER=google_ai_studio
 export GOOGLE_API_KEY="..."   # or: export GEMINI_API_KEY="..."
 
-# Optional: choose the embedding model
+# Optional: choose the embedding model (GEMINI_EMBED_MODEL is checked first, then GOOGLE_EMBED_MODEL,
+# then the hardcoded default "gemini-embedding-2")
 export GEMINI_EMBED_MODEL="gemini-embedding-001"  # or: gemini-embedding-2
 
 # Optional: choose the generation model (used by generate_offense_rag.py)
@@ -165,25 +166,22 @@ The `.json` file is the human-friendly view; the `.jsonl` file is the machine-fr
 
 ## 6) Build a Stage 2 task plan
 
-`plan_tasks.py` takes the Stage 1 pretty JSON output and produces a dependency-ordered task plan. It enriches each technique with durable ATT&CK chunk references from the SQLite index and constraints from `data/config/stage2_constraints.json`.
+`plan_tasks.py` takes the Stage 1 pretty JSON output and asks an LLM (local LM Studio by default, falling back to Gemini on failure, or Gemini directly via `--provider gemini`) to produce a task plan, deterministically validated against `data/config/stage2_constraints.json`. It enriches the model prompt with technique-level ATT&CK chunk text from the SQLite index, but does not persist any chunk-level evidence reference into the resulting plan.
 
 ```bash
-./venv/bin/python plan_tasks.py \
-  data/human_outs/<stage1-timestamp>.json \
-  --index-dir artifacts/offense_index
+./venv/bin/python plan_tasks.py --stage1-input data/human_outs/<stage1-timestamp>.json
 ```
 
-The planner writes:
+Omit `--stage1-input` to auto-select the latest Stage 1 output. The planner writes:
 
-- `data/plans/human_outs/<timestamp>.json`: formatted plan
-- `data/plans/machine_outs/<timestamp>.jsonl`: machine-readable plan
-- `data/plans/machine_outs/<timestamp>.input.json`: persisted planning context
+- `data/plans/machine_outs/PLAN_<stage1-stem>.jsonl`: appended to on every run, valid or invalid
+- `data/plans/human_outs/PLAN_<stage1-stem>.json`: written only when validation succeeds
 
-Use `--include-alternatives` to include Stage 1 alternatives as optional context. Primary Stage 1 techniques remain the required coverage set. See [STAGE2_PLANNER.md](STAGE2_PLANNER.md) for the full input, validation, and output contract.
+Stage 1 `alternatives` are always included as optional context (there is no flag to exclude them); primary Stage 1 `top_techniques` remain the required coverage set. See [STAGE2_PLANNER.md](STAGE2_PLANNER.md) for the full input, validation, and output contract.
 
 ## 7) Generate code from a plan
 
-`generate_code.py` sends each task in a Stage 2 plan to a local Ollama model, one independent request per task, and writes the result as a Python file under `data/code_scripts/`.
+`generate_code.py` sends each task in a Stage 2 plan to a local LM Studio model, one independent request per task, and writes the result as a Python file under `data/code_scripts/`.
 
 ```bash
 python generate_code.py data/plans/human_outs/<stage2-timestamp>.json
@@ -222,7 +220,7 @@ Lexical-only baseline:
 `eval_offense_generation.py` reuses `data/eval/eval_cases.jsonl` to score the full Stage 1 pipeline (decomposition + retrieval + Gemini generation + citation validation), not just raw retrieval. It runs `generate_offense_rag.py` per case and reports three metrics inspired by [RAGAS](https://github.com/explodinggradients/ragas), computed deterministically (no extra LLM-judge calls, no new dependencies):
 
 - `faithfulness_mean`: fraction of the model's `top_techniques`/`alternatives` entries that survived citation validation (`kept / (kept + dropped)`).
-- `answer_relevancy_mean`: cosine similarity between the query embedding and the generated `summary` embedding, using the same hosted-embeddings client as retrieval.
+- `answer_relevancy_mean`: cosine similarity between the query embedding and the generated `summary` embedding (or, when `summary` is blank, the concatenated `top_techniques[].rationale` text instead), using the same hosted-embeddings client as retrieval.
 - `end_to_end_recall_mean`: fraction of cases where an expected `mitre_id` survived all the way to the validated final answer, complementing `eval_offense_retrieval.py`'s raw-retrieval recall@K.
 
 ```bash

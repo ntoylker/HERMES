@@ -130,7 +130,7 @@ def main() -> None:
     parser.add_argument("--provider", default=None, help="Override embedding provider (used for answer relevancy)")
     parser.add_argument("--model", default=None, help="Override embedding model (used for answer relevancy)")
     parser.add_argument("--no-decompose", action="store_true", help="Disable query decomposition (for A/B comparison)")
-    parser.add_argument("--max-subqueries", type=int, default=4, help="Max parts query decomposition may produce")
+    parser.add_argument("--max-subqueries", type=int, default=10, help="Max parts query decomposition may produce")
     parser.add_argument("--limit", type=int, default=None, help="Limit number of cases")
     parser.add_argument("--show-failures", type=int, default=5, help="How many failing cases to show")
 

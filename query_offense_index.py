@@ -44,6 +44,50 @@ def _normalize_query(query: str) -> str:
     return " ".join(str(query).lower().split())
 
 
+def _hybrid_score(vector_max: float, lexical_best: float, lexical_weight: float, lexical_only: bool) -> float:
+    # Single source of truth for the ranking formula. sweep_offense_retrieval_fast.py imports this
+    # instead of keeping its own copy, so the two can't silently drift apart.
+    if lexical_only:
+        return float(lexical_best)
+    return float(vector_max) + float(lexical_weight) * float(lexical_best)
+
+
+def _lexical_candidates(conn: sqlite3.Connection, query: str, bm25_k: int) -> tuple[list[int], dict[int, float]]:
+    # Also imported by sweep_offense_retrieval_fast.py: one FTS5 query implementation, shared.
+    fts_query = _tokenize_for_fts(query)
+    try:
+        rows = conn.execute(
+            """
+            SELECT rowid, bm25(chunks_fts) AS score
+            FROM chunks_fts
+            WHERE chunks_fts MATCH ?
+            ORDER BY score
+            LIMIT ?
+            """,
+            (fts_query, bm25_k),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        # If query parse fails, fall back to raw query
+        rows = conn.execute(
+            """
+            SELECT rowid, bm25(chunks_fts) AS score
+            FROM chunks_fts
+            WHERE chunks_fts MATCH ?
+            ORDER BY score
+            LIMIT ?
+            """,
+            (query, bm25_k),
+        ).fetchall()
+
+    lexical_doc_ids: list[int] = []
+    lexical_rank_score_by_id: dict[int, float] = {}
+    for rank, (rowid, _score) in enumerate(rows):
+        doc_id = int(rowid)
+        lexical_doc_ids.append(doc_id)
+        lexical_rank_score_by_id[doc_id] = 1.0 / (1.0 + float(rank))
+    return lexical_doc_ids, lexical_rank_score_by_id
+
+
 def _cache_db_path() -> Path:
     return Path(__file__).resolve().parent / "cache" / CACHE_DB_FILENAME
 
@@ -201,44 +245,7 @@ def query_index(
 
     # Lexical hits (SQLite FTS5 bm25)
     conn = sqlite3.connect(str(db_path))
-    fts_query = _tokenize_for_fts(query)
-
-    lexical_doc_ids: list[int] = []
-    lexical_rank_score_by_id: dict[int, float] = {}
-
-    try:
-        rows = conn.execute(
-            """
-            SELECT rowid, bm25(chunks_fts) AS score
-            FROM chunks_fts
-            WHERE chunks_fts MATCH ?
-            ORDER BY score
-            LIMIT ?
-            """,
-            (fts_query, bm25_k),
-        ).fetchall()
-
-        for rank, (rowid, _score) in enumerate(rows):
-            doc_id = int(rowid)
-            lexical_doc_ids.append(doc_id)
-            lexical_rank_score_by_id[doc_id] = 1.0 / (1.0 + float(rank))
-
-    except sqlite3.OperationalError:
-        # If query parse fails, fall back to raw query
-        rows = conn.execute(
-            """
-            SELECT rowid, bm25(chunks_fts) AS score
-            FROM chunks_fts
-            WHERE chunks_fts MATCH ?
-            ORDER BY score
-            LIMIT ?
-            """,
-            (query, bm25_k),
-        ).fetchall()
-        for rank, (rowid, _score) in enumerate(rows):
-            doc_id = int(rowid)
-            lexical_doc_ids.append(doc_id)
-            lexical_rank_score_by_id[doc_id] = 1.0 / (1.0 + float(rank))
+    lexical_doc_ids, lexical_rank_score_by_id = _lexical_candidates(conn, query, bm25_k)
 
     # Union candidates
     candidates = set(vector_doc_ids) | set(lexical_doc_ids)
@@ -296,11 +303,7 @@ def query_index(
     # Compute final hybrid score and sort
     results = []
     for tech in by_tech.values():
-        if lexical_only:
-            hybrid = float(tech["lexical_best"])
-        else:
-            hybrid = float(tech["vector_max"]) + float(lexical_weight) * float(tech["lexical_best"])
-        tech["hybrid_score"] = hybrid
+        tech["hybrid_score"] = _hybrid_score(tech["vector_max"], tech["lexical_best"], lexical_weight, lexical_only)
         # Sort chunks by vector_sim
         tech["chunks"].sort(
             key=lambda c: (c["vector_sim"] is not None, c["vector_sim"] or -1.0),

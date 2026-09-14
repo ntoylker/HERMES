@@ -66,7 +66,7 @@ A single combined query can retrieve techniques for its dominant behavior while 
 }
 ```
 
-The model is instructed to split only when the query genuinely mixes distinct tactical behaviors, to prefer NOT splitting when unsure, to reuse the user's original wording verbatim per part (no paraphrasing), and to cap output at `--max-subqueries` parts (default `4`).
+The model is instructed to split only when the query genuinely mixes distinct tactical behaviors, to prefer NOT splitting when unsure, to reuse the user's original wording verbatim per part (no paraphrasing), and to cap output at `--max-subqueries` parts (`generate_offense_rag.py` defaults this to `10`; `decompose_query.py`'s own function/CLI default, used only when that module is invoked directly, is `4`).
 
 ### 3.3 Deterministic guardrails (fail open)
 
@@ -250,14 +250,16 @@ These control prompt size and evidence breadth/depth tradeoff, applied per part.
 
 - `--gen-model` (or `GEMINI_GEN_MODEL`, default `gemini-2.5-pro`) - also used for the decomposition call (section 3.2)
 - `--temperature` (default `0.2`)
-- `--max-output-tokens` (default `2048`; raised from `900` after empirical truncation was observed on multi-technique parts)
+- `--max-output-tokens` (default `4096`)
 - `--thinking-budget` (model-dependent behavior)
 - `--debug` (adds diagnostic excerpt on empty-text failures)
 
 ### 7.4 Decomposition controls
 
 - `--no-decompose` (skip query decomposition; each run becomes a single part)
-- `--max-subqueries` (default `4`)
+- `--max-subqueries` (default `10` on this script's own CLI; `decompose_query.py`'s internal function/CLI
+  default is `4`, which only applies when that module is invoked directly rather than through
+  `generate_offense_rag.py`)
 - `--dedupe-threshold` (default `0.92`, cosine similarity threshold for collapsing near-duplicate parts)
 
 Required environment key:
@@ -338,6 +340,6 @@ This file is the implementation deep dive for section "5) Generate technique lin
 
 ## 11) Stage 2 Handoff
 
-The pretty JSON written to `data/human_outs/<timestamp>.json` is the direct input to `plan_tasks.py`. Stage 2 uses `query` and `top_techniques` as its required planning inputs; it can include `alternatives` only when explicitly requested. Stage 2 does not use the generated `S1`, `S2`, citation labels as persistent identifiers. Instead, it resolves each selected technique against the SQLite index and records durable `chunk_id` references in the task plan.
+The pretty JSON written to `data/human_outs/<timestamp>.json` is the direct input to `plan_tasks.py`. Stage 2 uses `query` and `top_techniques` as its required planning inputs; `alternatives` are always included too (there is no flag to exclude them), as optional supporting context that is never required for coverage. Stage 2 does not use the generated `S1`, `S2`, citation labels as persistent identifiers, and it does not persist any evidence/chunk-level reference into the task plan either — it only fetches technique-level ATT&CK chunk text from the SQLite index to enrich the model prompt; the resulting tasks carry `technique_ids` but no chunk-level evidence field.
 
 `top_techniques` and `alternatives` are already post-validation and already merged across any decomposed parts by the time Stage 2 sees them (ungrounded entries were dropped per section 5.4, parts were combined per section 3.5); Stage 2 does not re-check citations and ignores the `citation_validation`, `decomposition`, and `parts` keys entirely.

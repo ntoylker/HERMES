@@ -2,12 +2,12 @@ import argparse
 import itertools
 import json
 import os
-import re
 import sqlite3
 from pathlib import Path
 import numpy as np
 
 from hosted_embeddings import create_embedding_client, load_embedding_config
+from query_offense_index import _hybrid_score, _lexical_candidates, _normalize, _normalize_query
 
 
 def _load_dotenv(workspace: Path) -> None:
@@ -29,25 +29,6 @@ def _load_dotenv(workspace: Path) -> None:
         if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
             value = value[1:-1]
         os.environ.setdefault(key, value)
-
-
-def _normalize(vec: np.ndarray) -> np.ndarray:
-    norm = np.linalg.norm(vec)
-    if norm == 0:
-        return vec
-    return vec / norm
-
-
-def _normalize_query(query: str) -> str:
-    return " ".join(str(query).lower().split())
-
-
-def _tokenize_for_fts(query: str) -> str:
-    tokens = re.findall(r"[A-Za-z0-9_]{2,}", query)
-    tokens = [token.lower() for token in tokens]
-    if not tokens:
-        return query
-    return " OR ".join(tokens[:20])
 
 
 def _recall_at_k(pred: list[str], gold: set[str], k: int) -> float:
@@ -99,46 +80,6 @@ def _load_chunks(conn: sqlite3.Connection) -> dict[int, dict]:
     return chunks
 
 
-def _top_lexical_ids(
-    conn: sqlite3.Connection,
-    query: str,
-    bm25_k: int,
-) -> tuple[list[int], dict[int, float]]:
-    lexical_doc_ids: list[int] = []
-    lexical_rank_score_by_id: dict[int, float] = {}
-    fts_query = _tokenize_for_fts(query)
-
-    try:
-        rows = conn.execute(
-            """
-            SELECT rowid, bm25(chunks_fts) AS score
-            FROM chunks_fts
-            WHERE chunks_fts MATCH ?
-            ORDER BY score
-            LIMIT ?
-            """,
-            (fts_query, bm25_k),
-        ).fetchall()
-    except sqlite3.OperationalError:
-        rows = conn.execute(
-            """
-            SELECT rowid, bm25(chunks_fts) AS score
-            FROM chunks_fts
-            WHERE chunks_fts MATCH ?
-            ORDER BY score
-            LIMIT ?
-            """,
-            (query, bm25_k),
-        ).fetchall()
-
-    for rank, (rowid, _score) in enumerate(rows):
-        doc_id = int(rowid)
-        lexical_doc_ids.append(doc_id)
-        lexical_rank_score_by_id[doc_id] = 1.0 / (1.0 + float(rank))
-
-    return lexical_doc_ids, lexical_rank_score_by_id
-
-
 def _aggregate_predictions(
     *,
     chunks: dict[int, dict],
@@ -185,10 +126,7 @@ def _aggregate_predictions(
 
     ranked = []
     for tech in by_tech.values():
-        if lexical_only:
-            score = float(tech["lexical_best"])
-        else:
-            score = float(tech["vector_max"]) + float(lexical_weight) * float(tech["lexical_best"])
+        score = _hybrid_score(tech["vector_max"], tech["lexical_best"], lexical_weight, lexical_only)
         ranked.append((score, str(tech["mitre_id"])))
 
     ranked.sort(key=lambda item: item[0], reverse=True)
@@ -267,7 +205,7 @@ def main() -> None:
         if q_norm in lexical_cache:
             lexical_ids, lexical_score_by_id = lexical_cache[q_norm]
         else:
-            lexical_ids, lexical_score_by_id = _top_lexical_ids(conn, query, max_bm25_k)
+            lexical_ids, lexical_score_by_id = _lexical_candidates(conn, query, max_bm25_k)
             lexical_cache[q_norm] = (lexical_ids, lexical_score_by_id)
 
         if args.lexical_only:
