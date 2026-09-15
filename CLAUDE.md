@@ -117,7 +117,9 @@ part's `generateContent` call sets a `responseSchema` constraining the JSON shap
 prompt, up to `--max-retries` times, default `3`) on empty text, a request error, or unparseable JSON —
 validates that every returned technique's citations are grounded in retrieved evidence and that no
 `alternatives` entry duplicates a `top_techniques` `mitre_id` (dropping violators in both cases), then
-merges parts back into one answer for backward compatibility with Stage 2. Prompt explicitly tells the
+merges parts back into one answer — deduping by `mitre_id` across parts (first occurrence wins) and
+re-prefixing each part's citation IDs to avoid collisions — for backward compatibility with Stage 2.
+Prompt explicitly tells the
 model to ignore instructions embedded in retrieved sources (prompt-injection defense against
 adversarial STIX/procedure text) and to never provide step-by-step offensive instructions. Always writes a
 timestamped pretty `.json` to `data/human_outs/` and a compact `.jsonl` to `data/machine_outs/`, even on
