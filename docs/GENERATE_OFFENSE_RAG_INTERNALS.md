@@ -13,7 +13,7 @@ Use [OFFENSE_RAG_QUICKSTART.md](OFFENSE_RAG_QUICKSTART.md) for standard operatio
 2. Runs [query_offense_index.py](../query_offense_index.py) per part with configured retrieval parameters.
 3. Pulls source chunks from the SQLite index for explainability, per part.
 4. Builds a constrained prompt with source IDs (`S1`, `S2`, ...), per part.
-5. Calls Gemini and parses the JSON response, per part.
+5. Calls Gemini and parses the JSON response, per part, retrying the same prompt up to `--max-retries` times on empty text, a request error, or unparseable JSON.
 6. Validates each returned technique's citations against the retrieved evidence and drops any that fail (see section 5.4), per part, then merges all parts back into a single set of top-level fields (see section 3.5).
 
 It returns a JSON object with:
@@ -36,7 +36,7 @@ Execution flow:
 4. For each part, independently:
    - Retrieve ranked techniques through [query_offense_index.py](../query_offense_index.py) using subprocess.
    - If retrieval is empty, record a deterministic empty part and move on (no Gemini call for that part).
-   - Otherwise, load source text snippets from `artifacts/offense_index/offense_index.sqlite`, build a prompt with the part's text, its ranked retrieved techniques, and numbered source blocks `[S1]`, `[S2]`, ..., call Gemini `generateContent` with JSON response MIME type, parse the output as JSON (with fence/substring fallback), then validate citations - drop any `top_techniques`/`alternatives` entry whose technique or citations are not grounded in that part's retrieved evidence, and drop any `alternatives` entry that duplicates a `top_techniques` `mitre_id` (section 5.4).
+   - Otherwise, load source text snippets from `artifacts/offense_index/offense_index.sqlite`, build a prompt with the part's text, its ranked retrieved techniques, and numbered source blocks `[S1]`, `[S2]`, ..., call Gemini `generateContent` with a JSON response MIME type and a `responseSchema` constraining the response to the `top_techniques`/`alternatives` shape, then parse the output as JSON (with fence/substring fallback). On empty text, a request error, or unparseable JSON, retry the same prompt up to `--max-retries` times (default `3`, section 7.3) before giving up on the part. Once parsed, validate citations - drop any `top_techniques`/`alternatives` entry whose technique or citations are not grounded in that part's retrieved evidence, and drop any `alternatives` entry that duplicates a `top_techniques` `mitre_id` (section 5.4).
 5. Merge all parts into top-level `top_techniques`/`alternatives`/`summary`/`citation_validation` (section 3.5).
 6. Write final outputs (`.json` + `.jsonl`) and print the `.json` path.
 
@@ -84,7 +84,7 @@ Use `--no-decompose` to skip this step entirely (useful for A/B comparison in [e
 
 ### 3.4 Per-part retrieval and generation
 
-Each surviving part (`{"id": "Q1", "text": "..."}`, ...) is run through the exact same retrieval -> source-fetch -> prompt -> Gemini -> citation-validation path described in sections 4-6, independently, with its own local `S1, S2, ...` source numbering. A part whose retrieval returns nothing skips generation entirely (same "No retrieval results." shape as the single-query case); a part whose generation call fails (empty text, invalid JSON, request error) is recorded with an `error`/`raw_text` field but does not stop the other parts from completing.
+Each surviving part (`{"id": "Q1", "text": "..."}`, ...) is run through the exact same retrieval -> source-fetch -> prompt -> Gemini -> citation-validation path described in sections 4-6, independently, with its own local `S1, S2, ...` source numbering. A part whose retrieval returns nothing skips generation entirely (same "No retrieval results." shape as the single-query case); a part whose generation call still fails after `--max-retries` attempts (empty text, invalid JSON, request error) is recorded with an `error`/`raw_text` field (plus an `attempts` count) but does not stop the other parts from completing.
 
 ### 3.5 Merging parts into the top-level answer
 
@@ -253,8 +253,11 @@ These control prompt size and evidence breadth/depth tradeoff, applied per part.
 - `--gen-model` (or `GEMINI_GEN_MODEL`, default `gemini-2.5-pro`) - also used for the decomposition call (section 3.2)
 - `--temperature` (default `0.2`)
 - `--max-output-tokens` (default `4096`)
+- `--max-retries` (default `3`) - generation attempts per part before giving up on it; retries the same prompt on empty text, a request error, or unparseable JSON (section 9)
 - `--thinking-budget` (model-dependent behavior)
 - `--debug` (adds diagnostic excerpt on empty-text failures)
+
+Every generation request also sets a `responseSchema` (alongside `responseMimeType: application/json`) constraining the reply to the `top_techniques`/`alternatives` shape - this is not a CLI flag, it applies to every request unconditionally, and it reduces (but does not eliminate) how often unparseable JSON occurs.
 
 ### 7.4 Decomposition controls
 
@@ -324,9 +327,9 @@ Common failure classes:
 4. Missing API key:
    - Runtime error if `GOOGLE_API_KEY`/`GEMINI_API_KEY` is absent, checked once up front.
 5. Generation empty text or request failure (per part):
-   - Structured error payload with finish reason and safety metadata, or a generic `generation_request_failed` error; other parts still proceed.
+   - Retried up to `--max-retries` times with the same prompt; if still failing, a structured error payload with finish reason and safety metadata (or a generic `generation_request_failed` error), plus an `attempts` count, is recorded, and other parts still proceed.
 6. Non-JSON model output (per part):
-   - Fallback JSON with `raw_text` excerpt for that part; other parts still proceed.
+   - Retried up to `--max-retries` times; if still unparseable, a fallback JSON with `raw_text` excerpt and an `attempts` count is recorded for that part, and other parts still proceed. A `responseSchema` (section 7.3) makes this less frequent but does not eliminate it.
 
 Use `--debug` when investigating model-returned empty text.
 

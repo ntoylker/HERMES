@@ -112,9 +112,12 @@ similarity across a technique's chunks and `lexical_best` is a rank-based FTS5 B
 
 ### Stage 1 (`generate_offense_rag.py`)
 
-Splits multi-intent queries into standalone parts, runs retrieval + Gemini generation per part, validates
-that every returned technique's citations are grounded in retrieved evidence (dropping ungrounded ones),
-then merges parts back into one answer for backward compatibility with Stage 2. Prompt explicitly tells the
+Splits multi-intent queries into standalone parts, runs retrieval + Gemini generation per part — each
+part's `generateContent` call sets a `responseSchema` constraining the JSON shape and is retried (same
+prompt, up to `--max-retries` times, default `3`) on empty text, a request error, or unparseable JSON —
+validates that every returned technique's citations are grounded in retrieved evidence and that no
+`alternatives` entry duplicates a `top_techniques` `mitre_id` (dropping violators in both cases), then
+merges parts back into one answer for backward compatibility with Stage 2. Prompt explicitly tells the
 model to ignore instructions embedded in retrieved sources (prompt-injection defense against
 adversarial STIX/procedure text) and to never provide step-by-step offensive instructions. Always writes a
 timestamped pretty `.json` to `data/human_outs/` and a compact `.jsonl` to `data/machine_outs/`, even on

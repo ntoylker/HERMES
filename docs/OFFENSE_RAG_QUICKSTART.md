@@ -157,7 +157,7 @@ Optional knobs:
 - `--top-techniques`, `--top-chunks`
 - `--vector-k`, `--bm25-k`, `--lexical-weight` if you are intentionally deviating from the standard config
 - `--max-sources`, `--max-chars-per-source`
-- `--gen-model`, `--temperature`, `--max-output-tokens`
+- `--gen-model`, `--temperature`, `--max-output-tokens`, `--max-retries` (default `3`, generation attempts per part)
 - `--no-decompose` to disable query decomposition; `--max-subqueries`, `--dedupe-threshold` to tune it
 - `--human-output-dir` to override the default `data/human_outs/` destination
 - `--machine-output-dir` to override the default `data/machine_outs/` destination

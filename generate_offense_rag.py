@@ -18,6 +18,33 @@ from decompose_query import decompose_query
 
 DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 DEFAULT_GEN_MODEL = "gemini-2.5-pro"
+DEFAULT_MAX_RETRIES = 3
+
+# Gemini structured-output constraint for the technique-linking response (section "Return JSON
+# with this shape" in _build_prompt). Constrains decoding so malformed JSON is far less likely;
+# it enforces shape/types only, not the semantic rules (e.g. no top/alternatives overlap) the
+# prompt text also states.
+_TECHNIQUE_ENTRY_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "mitre_id": {"type": "string"},
+        "name": {"type": "string"},
+        "rationale": {"type": "string"},
+        "citations": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["mitre_id", "name", "rationale", "citations"],
+}
+
+_TECHNIQUE_LINK_RESPONSE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "query": {"type": "string"},
+        "top_techniques": {"type": "array", "items": _TECHNIQUE_ENTRY_SCHEMA},
+        "summary": {"type": "string"},
+        "alternatives": {"type": "array", "items": _TECHNIQUE_ENTRY_SCHEMA},
+    },
+    "required": ["query", "top_techniques", "summary", "alternatives"],
+}
 
 
 class GenerationEmptyTextError(RuntimeError):
@@ -306,6 +333,7 @@ def _call_gemini_raw(
         "temperature": float(temperature),
         "maxOutputTokens": int(max_output_tokens),
         "responseMimeType": "application/json",
+        "responseSchema": _TECHNIQUE_LINK_RESPONSE_SCHEMA,
     }
     if thinking_budget is not None:
         generation_config["thinkingConfig"] = {"thinkingBudget": int(thinking_budget)}
@@ -432,72 +460,87 @@ def _generate_for_part(
     temperature: float,
     max_output_tokens: int,
     thinking_budget: int | None,
+    max_retries: int,
     debug: bool,
 ) -> dict:
+    # Same prompt is retried as-is: failures here (empty text, malformed JSON) are typically
+    # transient decoding glitches, not content the model needs corrective feedback on.
     prompt = _build_prompt(part_query, results, sources)
-    try:
-        response_json = _call_gemini_raw(
-            prompt=prompt,
-            api_key=api_key,
-            base_url=base_url,
-            model=gen_model,
-            temperature=temperature,
-            max_output_tokens=max_output_tokens,
-            thinking_budget=thinking_budget,
-        )
-        response_text = _extract_text(response_json)
-        finish_reason = _extract_debug_fields(response_json).get("finish_reason")
-    except GenerationEmptyTextError as exc:
-        error = {
-            "type": "generation_empty_text",
-            "message": str(exc),
-            "finish_reason": exc.finish_reason,
-            "prompt_feedback": exc.prompt_feedback,
-            "safety_ratings": exc.safety_ratings,
-            "prompt_chars": len(prompt),
-            "retrieved_count": len(results),
-            "source_count": len(sources),
-            "model": gen_model,
-            "max_output_tokens": max_output_tokens,
-            "thinking_budget": thinking_budget,
-        }
-        if debug:
-            error["response_excerpt"] = _truncate_json(response_json)
-        return {
-            "top_techniques": [],
-            "alternatives": [],
-            "summary": "Model returned empty text.",
-            "citation_validation": None,
-            "error": error,
-        }
-    except Exception as exc:  # noqa: BLE001 - one part's transient failure must not sink the others
-        return {
-            "top_techniques": [],
-            "alternatives": [],
-            "summary": "Generation request failed.",
-            "citation_validation": None,
-            "error": {"type": "generation_request_failed", "message": str(exc)},
-        }
 
-    parsed = _parse_json_response(response_text)
-    if parsed is None:
-        # Surfaces whether MAX_TOKENS truncation (vs. malformed output) caused the parse failure.
-        return {
-            "top_techniques": [],
-            "alternatives": [],
-            "summary": "Model did not return valid JSON.",
-            "citation_validation": None,
-            "raw_text": response_text[:4000],
-            "finish_reason": finish_reason,
-        }
+    for attempt in range(1, max(1, max_retries) + 1):
+        is_last_attempt = attempt >= max_retries
 
-    citation_validation = validate_generated_links(parsed, results, sources)
-    return {
-        "top_techniques": parsed["top_techniques"],
-        "alternatives": parsed["alternatives"],
-        "summary": str(parsed.get("summary") or ""),
-        "citation_validation": citation_validation,
-    }
+        try:
+            response_json = _call_gemini_raw(
+                prompt=prompt,
+                api_key=api_key,
+                base_url=base_url,
+                model=gen_model,
+                temperature=temperature,
+                max_output_tokens=max_output_tokens,
+                thinking_budget=thinking_budget,
+            )
+            response_text = _extract_text(response_json)
+            finish_reason = _extract_debug_fields(response_json).get("finish_reason")
+        except GenerationEmptyTextError as exc:
+            if not is_last_attempt:
+                continue
+            error = {
+                "type": "generation_empty_text",
+                "message": str(exc),
+                "finish_reason": exc.finish_reason,
+                "prompt_feedback": exc.prompt_feedback,
+                "safety_ratings": exc.safety_ratings,
+                "prompt_chars": len(prompt),
+                "retrieved_count": len(results),
+                "source_count": len(sources),
+                "model": gen_model,
+                "max_output_tokens": max_output_tokens,
+                "thinking_budget": thinking_budget,
+                "attempts": attempt,
+            }
+            if debug:
+                error["response_excerpt"] = _truncate_json(response_json)
+            return {
+                "top_techniques": [],
+                "alternatives": [],
+                "summary": "Model returned empty text.",
+                "citation_validation": None,
+                "error": error,
+            }
+        except Exception as exc:  # noqa: BLE001 - one part's transient failure must not sink the others
+            if not is_last_attempt:
+                continue
+            return {
+                "top_techniques": [],
+                "alternatives": [],
+                "summary": "Generation request failed.",
+                "citation_validation": None,
+                "error": {"type": "generation_request_failed", "message": str(exc), "attempts": attempt},
+            }
+
+        parsed = _parse_json_response(response_text)
+        if parsed is None:
+            if not is_last_attempt:
+                continue
+            # Surfaces whether MAX_TOKENS truncation (vs. malformed output) caused the parse failure.
+            return {
+                "top_techniques": [],
+                "alternatives": [],
+                "summary": "Model did not return valid JSON.",
+                "citation_validation": None,
+                "raw_text": response_text[:4000],
+                "finish_reason": finish_reason,
+                "attempts": attempt,
+            }
+
+        citation_validation = validate_generated_links(parsed, results, sources)
+        return {
+            "top_techniques": parsed["top_techniques"],
+            "alternatives": parsed["alternatives"],
+            "summary": str(parsed.get("summary") or ""),
+            "citation_validation": citation_validation,
+        }
 
 
 def _run_part(
@@ -518,6 +561,7 @@ def _run_part(
     temperature: float,
     max_output_tokens: int,
     thinking_budget: int | None,
+    max_retries: int,
     debug: bool,
 ) -> dict:
     part_id = part["id"]
@@ -561,6 +605,7 @@ def _run_part(
         temperature=temperature,
         max_output_tokens=max_output_tokens,
         thinking_budget=thinking_budget,
+        max_retries=max_retries,
         debug=debug,
     )
     return {
@@ -660,6 +705,12 @@ def main() -> None:
         default=0,
         help="Gemini thinking budget (0 uses model default; Gemini 2.5 requires >0)",
     )
+    parser.add_argument(
+        "--max-retries",
+        type=int,
+        default=DEFAULT_MAX_RETRIES,
+        help=f"Generation attempts per part before giving up on it (default: {DEFAULT_MAX_RETRIES}).",
+    )
     parser.add_argument("--no-decompose", action="store_true", help="Disable query decomposition")
     parser.add_argument("--max-subqueries", type=int, default=10, help="Max parts query decomposition may produce")
     parser.add_argument(
@@ -721,6 +772,7 @@ def main() -> None:
             temperature=float(args.temperature),
             max_output_tokens=int(args.max_output_tokens),
             thinking_budget=resolved_thinking_budget,
+            max_retries=int(args.max_retries),
             debug=bool(args.debug),
         )
         for part in decomposition["sub_queries"]
