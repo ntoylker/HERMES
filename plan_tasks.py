@@ -292,10 +292,26 @@ class ContextBuilder:
             '      "consumes": [],',
             '      "implementation_details": "Concrete architecture notes: which stdlib modules and mechanics this task uses.",',
             '      "rag_retrieval_hints": ["search query 1", "search query 2"]',
+            "    },",
+            "    {",
+            '      "task_id": "TASK_002",',
+            '      "task_type": "<one of the allowed_task_types listed above>",',
+            '      "suggested_filename": "another_module.py",',
+            '      "description": "One or two sentences describing what this task is responsible for.",',
+            '      "technique_ids": ["<a technique ID from section 3 above>"],',
+            '      "dependencies": ["TASK_001"],',
+            '      "provides": ["SymbolC"],',
+            '      "consumes": ["SymbolA"],',
+            '      "implementation_details": "Concrete architecture notes, including how it uses SymbolA from its TASK_001 dependency.",',
+            '      "rag_retrieval_hints": ["search query 1", "search query 2"]',
             "    }",
             "  ]",
             "}",
             "```",
+            "Note how TASK_002 demonstrates the dependency contract: it lists TASK_001 in `dependencies` and "
+            "consumes `SymbolA`, which TASK_001 declared in `provides`. `SymbolB` is provided but not "
+            "consumed anywhere in this example, which is fine — a symbol only needs to be consumed if "
+            "another task actually needs it.",
         ])
 
         if feedback:
