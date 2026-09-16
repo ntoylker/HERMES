@@ -86,7 +86,7 @@ data/raw/enterprise-attack/enterprise-attack.json (STIX bundle)
   -> build_offense_index.py        -> artifacts/offense_index/ (SQLite FTS5 + embeddings.npy, via hosted_embeddings.py)
   -> query_offense_index.py        (hybrid vector+BM25 retrieval, called by everything below)
   -> generate_offense_rag.py       STAGE 1: query decomposition + Gemini technique linking + citation validation
-  -> plan_tasks.py                 STAGE 2: Gemini task planning + deterministic Python validation
+  -> plan_tasks.py                 STAGE 2: LM Studio (Gemini-fallback) task planning + deterministic Python validation
   -> generate_code.py              STAGE 3: per-task Python file generation via local LM Studio
 ```
 
@@ -141,7 +141,11 @@ remapping step in the current schema (v2.0) — the model's own task IDs are per
 validation errors and the previous draft are fed back for up to `--max-retries` attempts. Always appends a
 machine record (`status` ∈ `valid`/`invalid`) to `data/plans/machine_outs/`; the human-readable plan under
 `data/plans/human_outs/` is written only when validation succeeds, so its existence — not a
-`planning_status` field — is what gates Stage 3.
+`planning_status` field — is what gates Stage 3. The prompt's worked JSON example (in the schema section)
+uses deliberately generic placeholder values, not real task content — an earlier version's concrete
+credential-harvesting example caused generated plans to anchor on a near-identical first task regardless of
+the query; the example now also links two tasks to demonstrate the `provides`/`consumes` contract
+concretely.
 
 ### Stage 3 (`generate_code.py`)
 

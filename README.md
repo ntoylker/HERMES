@@ -12,8 +12,9 @@ execution/validation) and a second RAG over malware-code samples do not exist ye
 generation today is task-conditioned only, not malware-sample-grounded.
 
 All work in this repo must stay thesis-safe: isolated sandbox, no real exploit code, no operational
-attack instructions, no real targets/credentials/persistence/live C2/exfiltration. Stage 2's
-`data/config/stage2_constraints.json` encodes this as machine-checked policy — see
+attack instructions, no real targets/credentials/persistence/live C2/exfiltration. This is a prompt-level
+instruction today, not a machine-checked one: Stage 2's `data/config/stage2_constraints.json` only
+constrains structure (task-type taxonomy, target language), not task content — see
 [Architecture](CLAUDE.md) for details.
 
 ## What Has Been Done
@@ -57,7 +58,8 @@ Note: `data/`, `cache/`, `logs/`, `*.sqlite`, `*.npy`, and most `*.jsonl` are `.
 - `plan_tasks.py` — **Stage 2**: turns a Stage 1 output into a validated, dependency-ordered task
   plan, deterministically checked against `data/config/stage2_constraints.json`.
 - `generate_code.py` — **Stage 3**: turns a Stage 2 plan into per-task Python files via a local
-  LM Studio model, gated on `planning_status == "valid"`.
+  LM Studio model. Gated on the human-readable plan file's existence — the current schema (v2.0) has no
+  `planning_status` field.
 - `hosted_embeddings.py` abstracts the hosted embedding providers (Google AI Studio, Azure OpenAI,
   OpenAI).
 - `eval_offense_retrieval.py` evaluates retrieval quality on the fixed eval cases.
@@ -71,7 +73,9 @@ retrieval or Gemini failure:
 - `data/human_outs/<timestamp>.json` for human-friendly review
 - `data/machine_outs/<timestamp>.jsonl` for line-delimited machine processing
 
-Stage 2 follows the same pretty-JSON/JSONL pattern under `data/plans/`.
+Stage 2 writes a similar pretty-JSON/JSONL pair under `data/plans/`, but not the same fresh-timestamp
+pattern: both files are named after the Stage 1 input's filename stem, the JSONL is appended to on every
+run (valid or invalid), and the pretty JSON is written only when validation succeeds.
 
 ## Running the Pipeline
 

@@ -40,6 +40,18 @@ keys exist but are not consumed anywhere; the "Environment" line shown to the mo
 not read from this file. There is no `forbidden_capability_keywords` list, network-policy field, or
 implementation-mode field in the current schema.
 
+## Prompt Design
+
+The prompt's `## 5. TARGET JSON OUTPUT SCHEMA` section shows the model a worked JSON example so it learns
+the expected shape. Every concrete value in that example (filenames, symbol names, technique IDs,
+descriptions) is a generic placeholder, not a suggestion — an explicit instruction tells the model so. This
+replaced an earlier version whose example used concrete domain content (a credential-harvesting task),
+which generated plans were anchoring on: `TASK_001` tended to be a near-identical "credential data model"
+task regardless of the query. The example now shows two linked tasks specifically to demonstrate the
+`dependencies`/`provides`/`consumes` contract concretely — `TASK_002` depends on `TASK_001` and consumes a
+symbol `TASK_001` provides, while a second provided symbol is left unconsumed to show that's legal (only
+`consumes` requires a provider; the reverse isn't required).
+
 ## Planning Flow
 
 1. Load the Stage 1 result and `stage2_constraints.json`.
