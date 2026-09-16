@@ -605,6 +605,7 @@ class PlannerEngine:
             except Exception as e:
                 print(f"[!] Generation error on attempt {attempt}: {e}", file=sys.stderr)
                 if attempt == self.max_retries:
+                    self.persist(previous_plan or {}, stem, status="invalid", errors=[f"Generation failed with error: {e}"])
                     raise
                 feedback = [f"Generation failed with error: {e}. Please return valid JSON."]
                 continue
