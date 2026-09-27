@@ -19,8 +19,20 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import requests
 from dotenv import load_dotenv
+
+from hosted_embeddings import create_embedding_client, load_embedding_config
+from query_offense_index import (
+    _cache_connect,
+    _cache_db_path,
+    _cache_get,
+    _cache_init,
+    _cache_put,
+    _normalize,
+    _normalize_query,
+)
 
 load_dotenv()
 
@@ -31,6 +43,24 @@ DEFAULT_GEMINI_MODEL = "gemini-2.5-pro"
 DEFAULT_TIMEOUT = 600
 DEFAULT_MAX_TOKENS = 16384
 DEFAULT_MAX_RETRIES = 3
+
+# Chunk types that are always included when present (canonical technique text, not "examples").
+MANDATORY_CHUNK_TYPES = ("technique_description", "technique_overview")
+# Global ceiling on procedure-example chunks across the whole evidence block, so a query that
+# resolves to many well-documented techniques can't blow the LM Studio context window on evidence
+# alone (Stage 2 runs against the same fixed-context local model as Stage 3).
+GLOBAL_MAX_EXAMPLE_CHUNKS = 24
+
+
+def _example_slot_budget(example_count: int) -> int:
+    """Chunk-count-scaled cap: well-documented techniques get more example slots than sparse ones."""
+    if example_count <= 2:
+        return example_count
+    if example_count <= 10:
+        return 3
+    if example_count <= 50:
+        return 5
+    return 8
 
 
 def _timestamped_stem() -> str:
@@ -89,6 +119,9 @@ class ContextBuilder:
         self.stage1_path = stage1_path
         self.db_path = db_path
         self.constraints_path = constraints_path
+        self._chunk_embedding_index_loaded = False
+        self._chunk_embedding_index: tuple[Any, Any, np.ndarray] | None = None
+        self._query_embedding_cache: dict[str, np.ndarray] = {}
 
     def load_stage1_artifact(self) -> dict[str, Any]:
         if not self.stage1_path.exists():
@@ -105,7 +138,7 @@ class ContextBuilder:
 
     def extract_stage1_elements(
         self, stage1_data: dict[str, Any]
-    ) -> tuple[str, str, list[dict[str, str]], set[str], set[str]]:
+    ) -> tuple[str, str, list[dict[str, str]], set[str], set[str], dict[str, str]]:
         query = str(stage1_data.get("query", ""))
         summary = str(stage1_data.get("summary", ""))
 
@@ -122,6 +155,11 @@ class ContextBuilder:
 
         top_tech_ids: set[str] = set()
         alt_tech_ids: set[str] = set()
+        # Maps a technique to the specific sub-query/part text that surfaced it, so evidence for
+        # that technique can be ranked against the phase it's actually relevant to, rather than the
+        # whole (possibly multi-intent) composite query. First occurrence wins if a technique shows
+        # up under more than one part, mirroring _merge_parts' own dedup convention in Stage 1.
+        technique_query_map: dict[str, str] = {}
 
         if isinstance(stage1_data.get("top_techniques"), list):
             for t in stage1_data["top_techniques"]:
@@ -137,25 +175,104 @@ class ContextBuilder:
             for part in stage1_data["parts"]:
                 if not isinstance(part, dict):
                     continue
+                part_text = str(part.get("text") or "").strip()
                 for t in part.get("top_techniques") or []:
                     if isinstance(t, dict) and t.get("mitre_id"):
-                        top_tech_ids.add(str(t["mitre_id"]).strip())
+                        mid = str(t["mitre_id"]).strip()
+                        top_tech_ids.add(mid)
+                        if part_text:
+                            technique_query_map.setdefault(mid, part_text)
                 for t in part.get("alternatives") or []:
                     if isinstance(t, dict) and t.get("mitre_id"):
-                        alt_tech_ids.add(str(t["mitre_id"]).strip())
+                        mid = str(t["mitre_id"]).strip()
+                        alt_tech_ids.add(mid)
+                        if part_text:
+                            technique_query_map.setdefault(mid, part_text)
 
         if not top_tech_ids and isinstance(stage1_data.get("parts"), list):
             for part in stage1_data["parts"]:
                 if not isinstance(part, dict):
                     continue
+                part_text = str(part.get("text") or "").strip()
                 for t in (part.get("retrieved_techniques") or [])[:3]:
                     if isinstance(t, dict) and t.get("mitre_id"):
-                        top_tech_ids.add(str(t["mitre_id"]).strip())
+                        mid = str(t["mitre_id"]).strip()
+                        top_tech_ids.add(mid)
+                        if part_text:
+                            technique_query_map.setdefault(mid, part_text)
 
-        return query, summary, sub_queries, top_tech_ids, alt_tech_ids
+        return query, summary, sub_queries, top_tech_ids, alt_tech_ids, technique_query_map
+
+    def _load_chunk_embedding_index(self) -> tuple[Any, Any, np.ndarray] | None:
+        """Load the embedding client/config and the index's chunk-embedding matrix, once per run.
+
+        Cached on the instance (not per-call) since a PlannerEngine retry loop can call
+        fetch_attack_evidence several times per Stage 2 run. Returns None (never raises) if
+        embeddings aren't available, so evidence selection can fall back to a deterministic order
+        instead of failing Stage 2 outright.
+        """
+        if self._chunk_embedding_index_loaded:
+            return self._chunk_embedding_index
+
+        self._chunk_embedding_index_loaded = True
+        try:
+            meta_path = self.db_path.parent / "index_meta.json"
+            emb_path = self.db_path.parent / "embeddings.npy"
+            if not meta_path.exists() or not emb_path.exists():
+                return None
+
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            emb_meta = meta.get("embeddings")
+            if not emb_meta:
+                return None
+
+            cfg = load_embedding_config(provider=emb_meta.get("provider"), model=emb_meta.get("model"))
+            client = create_embedding_client(cfg)
+            emb_matrix = np.load(str(emb_path), mmap_mode="r")
+            if emb_matrix.ndim != 2:
+                return None
+
+            self._chunk_embedding_index = (cfg, client, emb_matrix)
+        except Exception as e:
+            print(f"[!] Relevance-ranked evidence selection unavailable, falling back to default ordering: {e}", file=sys.stderr)
+            self._chunk_embedding_index = None
+        return self._chunk_embedding_index
+
+    def _embed_text_cached(self, text: str, cfg: Any, client: Any) -> np.ndarray | None:
+        """Embed text via the same cache DB Stage 1 uses, memoized per-instance for repeat texts."""
+        if text in self._query_embedding_cache:
+            return self._query_embedding_cache[text]
+        try:
+            cache_conn = _cache_connect(_cache_db_path())
+            _cache_init(cache_conn)
+            query_norm = _normalize_query(text)
+            cache_model = cfg.model or cfg.azure_deployment or "unknown"
+            try:
+                cached = _cache_get(cache_conn, query_norm=query_norm, provider=cfg.provider, model=cache_model)
+                if cached is None:
+                    q_emb = client.embed_texts([text])[0]
+                    _cache_put(
+                        cache_conn, query_norm=query_norm, provider=cfg.provider,
+                        model=cache_model, embedding=q_emb,
+                    )
+                else:
+                    q_emb = cached
+            finally:
+                cache_conn.close()
+            q_vec = _normalize(np.asarray(q_emb, dtype=np.float32))
+        except Exception as e:
+            print(f"[!] Failed to embed text for relevance ranking: {e}", file=sys.stderr)
+            return None
+        self._query_embedding_cache[text] = q_vec
+        return q_vec
 
     def fetch_attack_evidence(
-        self, technique_ids: set[str], limit_per_technique: int = 3, max_chars: int = 800
+        self,
+        technique_ids: set[str],
+        top_tech_ids: set[str],
+        technique_query_map: dict[str, str],
+        fallback_query_text: str,
+        max_chars: int = 800,
     ) -> dict[str, list[dict[str, str]]]:
         if not self.db_path.exists():
             raise FileNotFoundError(f"Missing SQLite index: {self.db_path}")
@@ -168,26 +285,94 @@ class ContextBuilder:
         try:
             placeholders = ",".join("?" for _ in technique_ids)
             query = f"""
-                SELECT mitre_id, name, chunk_type, text
+                SELECT id, mitre_id, name, chunk_type, text
                 FROM chunks
                 WHERE mitre_id IN ({placeholders})
-                ORDER BY CASE chunk_type
-                    WHEN 'technique_description' THEN 0
-                    WHEN 'technique_overview' THEN 1
-                    ELSE 2 END, id ASC
             """
-            cursor = conn.execute(query, list(technique_ids))
-            for mid, name, chunk_type, text in cursor.fetchall():
-                mid_str = str(mid).strip()
-                if mid_str in evidence_map and len(evidence_map[mid_str]) < limit_per_technique:
-                    snippet = (text or "")[:max_chars].strip()
-                    evidence_map[mid_str].append({
-                        "name": str(name or ""),
-                        "chunk_type": str(chunk_type or ""),
-                        "text": snippet,
-                    })
+            rows = conn.execute(query, list(technique_ids)).fetchall()
         finally:
             conn.close()
+
+        names_by_tech: dict[str, str] = {}
+        mandatory_by_tech: dict[str, dict[str, str]] = {}
+        examples_by_tech: dict[str, list[tuple[int, str, str]]] = {}
+
+        for row_id, mitre_id, name, chunk_type, text in rows:
+            mid = str(mitre_id).strip()
+            if mid not in evidence_map:
+                continue
+            names_by_tech.setdefault(mid, str(name or ""))
+            if chunk_type in MANDATORY_CHUNK_TYPES:
+                mandatory_by_tech.setdefault(mid, {})[chunk_type] = text or ""
+            else:
+                examples_by_tech.setdefault(mid, []).append((int(row_id), str(chunk_type or ""), text or ""))
+
+        embed_index = self._load_chunk_embedding_index()
+
+        # Rank each technique's example (procedure-usage) chunks by relevance to the specific
+        # sub-query/part that surfaced this technique (not the whole composite query) - see
+        # technique_query_map's docstring in extract_stage1_elements for why. Falls back to the
+        # whole query only if this technique has no known originating part (e.g. single-intent
+        # queries with no decomposition).
+        selected_examples: list[dict[str, Any]] = []
+        for mid in technique_ids:
+            candidates = examples_by_tech.get(mid, [])
+            if not candidates:
+                continue
+            budget = _example_slot_budget(len(candidates))
+            if budget <= 0:
+                continue
+
+            q_vec = None
+            if embed_index is not None:
+                cfg, client, emb_matrix = embed_index
+                relevance_text = technique_query_map.get(mid) or fallback_query_text
+                q_vec = self._embed_text_cached(relevance_text, cfg, client)
+
+            if q_vec is not None:
+                scored = []
+                for row_id, chunk_type, text in candidates:
+                    idx = row_id - 1
+                    score = float(emb_matrix[idx] @ q_vec) if 0 <= idx < emb_matrix.shape[0] else -1.0
+                    scored.append((score, row_id, chunk_type, text))
+                scored.sort(key=lambda c: c[0], reverse=True)
+            else:
+                # Fallback (no embeddings available): stable, deterministic id order.
+                scored = [(0.0, rid, ct, tx) for rid, ct, tx in sorted(candidates, key=lambda c: c[0])]
+
+            for score, _row_id, chunk_type, text in scored[:budget]:
+                selected_examples.append({
+                    "mitre_id": mid,
+                    "is_top": mid in top_tech_ids,
+                    "score": score,
+                    "chunk_type": chunk_type,
+                    "text": text,
+                })
+
+        # Global ceiling: trim lowest-priority examples first (alt-technique examples before
+        # top-technique ones, lowest relevance score before higher) if the budget is still too big.
+        if len(selected_examples) > GLOBAL_MAX_EXAMPLE_CHUNKS:
+            selected_examples.sort(key=lambda e: (not e["is_top"], -e["score"]))
+            selected_examples = selected_examples[:GLOBAL_MAX_EXAMPLE_CHUNKS]
+
+        for mid in technique_ids:
+            chunks: list[dict[str, str]] = []
+            mand = mandatory_by_tech.get(mid, {})
+            for ctype in MANDATORY_CHUNK_TYPES:
+                if ctype in mand:
+                    chunks.append({
+                        "name": names_by_tech.get(mid, ""),
+                        "chunk_type": ctype,
+                        "text": mand[ctype][:max_chars].strip(),
+                    })
+            evidence_map[mid] = chunks
+
+        for ex in selected_examples:
+            evidence_map[ex["mitre_id"]].append({
+                "name": names_by_tech.get(ex["mitre_id"], ""),
+                "chunk_type": ex["chunk_type"],
+                "text": ex["text"][:max_chars].strip(),
+            })
 
         return evidence_map
 
@@ -198,10 +383,12 @@ class ContextBuilder:
     ) -> tuple[str, str, set[str]]:
         stage1_data = self.load_stage1_artifact()
         constraints = self.load_constraints()
-        query, summary, sub_queries, top_tech_ids, alt_tech_ids = self.extract_stage1_elements(stage1_data)
+        query, summary, sub_queries, top_tech_ids, alt_tech_ids, technique_query_map = (
+            self.extract_stage1_elements(stage1_data)
+        )
 
         all_techniques = top_tech_ids | alt_tech_ids
-        evidence_map = self.fetch_attack_evidence(all_techniques, limit_per_technique=3)
+        evidence_map = self.fetch_attack_evidence(all_techniques, top_tech_ids, technique_query_map, query)
 
         allowed_task_types = constraints.get("allowed_task_types", [])
         target_language = constraints.get("target_language", "python")
@@ -269,6 +456,34 @@ class ContextBuilder:
             "   - `consumes`: list of imported symbol names needed by this task. RULE: Every symbol in `consumes` MUST be provided by at least one task listed in `dependencies`.",
             "   - `implementation_details`: Concrete architecture instructions specifying standard libraries (e.g., configparser, ctypes, socket, ssl, urllib, subprocess) or mechanics.",
             "   - `rag_retrieval_hints`: 2-4 search queries for Stage 3 RAG to retrieve real Python implementation patterns.",
+            "",
+            "## 4b. DATA MODEL & COHESION PRINCIPLES",
+            "Design tasks for semantic cohesion and proper layering, not just syntactic correctness:",
+            "",
+            "1. CO-LOCATE RETURN TYPES WITH FUNCTIONS:",
+            "   If a function returns a custom type (dataclass, class, NamedTuple), define that type in the SAME task",
+            "   as the function, not in a downstream/dependent task. The return type is part of the function's contract.",
+            "   Example: execute_shell_command() returns ExecutionResult → both belong in the same task.",
+            "",
+            "2. INFRASTRUCTURE LAYERING PATTERN:",
+            "   Organize tasks hierarchically to minimize coupling:",
+            "   - LAYER 1 (Foundation): Shared data models, utility functions, no dependencies (foundational tasks)",
+            "   - LAYER 2 (Domain): Tasks implementing specific functionality, depend on Layer 1 only",
+            "   - LAYER 3 (Orchestration): Wires components together, depends on all others",
+            "",
+            "3. MINIMIZE UPWARD COUPLING:",
+            "   Coupling should flow downward (domain → infrastructure), never upward (infrastructure → domain).",
+            "   If a symbol is defined in task A and consumed by ONLY ONE downstream task B, strongly consider",
+            "   moving that symbol into task B instead. Avoid infrastructure bloat.",
+            "",
+            "4. GROUP RELATED SYMBOLS:",
+            "   In the 'provides' list, group semantically related items together: return types, parameter types,",
+            "   configuration classes, and factories that create instances of those types should all be in the",
+            "   same task as the function(s) that use them.",
+            "",
+            "5. SYMBOL NAMING & DISCOVERY:",
+            "   Each symbol name in 'provides' should make sense in context: if you see 'ExecutionResult' in",
+            "   a task's 'provides', it should be obvious what function(s) use it. Avoid orphaned types.",
             "",
             "## 5. TARGET JSON OUTPUT SCHEMA",
             "Return JSON adhering strictly to this schema. The concrete values below (filenames, symbol "
