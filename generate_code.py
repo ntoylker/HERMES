@@ -203,7 +203,6 @@ def _build_task_prompt(task: dict, generated: dict[str, dict]) -> str:
 
     lines = [
         "You are a code generator inside an isolated academic red-team research sandbox.",
-        "This code is for authorized, defensive security research on offline/sandboxed systems only.",
         "",
         f"Implement the file `{task['suggested_filename']}` for the task below. Respond with NOTHING "
         "except a single fenced code block containing the complete file contents:",
@@ -220,6 +219,49 @@ def _build_task_prompt(task: dict, generated: dict[str, dict]) -> str:
         f"May use from dependencies (consumes): {', '.join(task.get('consumes') or [])}",
         f"Implementation details: {task.get('implementation_details') or ''}",
     ]
+
+    # Add explicit import instructions for consumed symbols from dependencies.
+    consumes = task.get("consumes") or []
+    dependencies = task.get("dependencies") or []
+    if consumes and dependencies:
+        lines += [
+            "",
+            "IMPORT REQUIREMENTS: For each symbol you consume, add a corresponding import statement at the top of your file.",
+            "Map each consumed symbol to the dependency module that provides it, using this format:",
+            "  from TASK_NNN_module_name import symbol_name",
+        ]
+        # Build a map of which dependency provides which symbol from the plan context.
+        import_map = {}
+        for dep_id in dependencies:
+            dep = generated.get(dep_id)
+            if dep:
+                module_stem = Path(dep["filename"]).stem
+                # Try to extract provides from the dependency info if available
+                # For now, document the pattern even if we can't fully map it
+                import_map[dep_id] = module_stem
+
+        if import_map:
+            lines += ["", "Dependency module mappings:"]
+            for dep_id, module_stem in import_map.items():
+                lines.append(f"  {dep_id} → {module_stem}")
+            lines.append("")
+            lines.append(
+                "CRITICAL: You must have an import statement for EACH symbol in 'consumes' at the top of your file, "
+                "BEFORE any code that uses those symbols. Missing imports will cause runtime NameError."
+            )
+
+    # Add cross-task narrative context from Stage 2.5 enhancement (if present).
+    scenario = task.get("scenario_context")
+    if scenario:
+        lines += [
+            "",
+            "Context within the attack chain (from plan enhancement):",
+            f"  - Narrative role: {scenario.get('narrative_role', '')}",
+            f"  - Upstream assumptions: {scenario.get('upstream_assumptions', '')}",
+            f"  - Downstream contract: {scenario.get('downstream_contract', '')}",
+            f"  - Consistency notes: {scenario.get('consistency_notes', '')}",
+            f"  - Out of scope: {scenario.get('non_goals', '')}",
+        ]
 
     hints = task.get("rag_retrieval_hints") or []
     if hints:
