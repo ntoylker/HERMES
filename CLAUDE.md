@@ -40,10 +40,15 @@ python generate_offense_rag.py "abuse wmi to execute payload remotely" --index-d
 # Stage 2: turn a Stage 1 output into a validated task plan
 python plan_tasks.py --stage1-input data/human_outs/<stage1-timestamp>.json
 
-# Stage 3: generate per-task Python files from a Stage 2 plan (local LM Studio)
+# Stage 2.5 (optional, manual — not called by mvp-v1.py): attach cross-task narrative context to a
+# Stage 2 plan; writes to data/plans/enhanced_outs/, separate from Stage 2's data/plans/human_outs/
+python plan_enhancing.py data/plans/human_outs/PLAN_<stage1-stem>.json
+
+# Stage 3: generate per-task Python files from a Stage 2 (or Stage 2.5-enhanced) plan (local LM Studio)
 python generate_code.py data/plans/human_outs/<stage2-timestamp>.json --timeout 1200
 
 # One-shot smoke-test driver: runs Stage 1 -> 2 -> 3 back-to-back for a query stored in a .txt file
+# (Stage 2.5 is not part of this chain)
 python mvp-v1.py path/to/query.txt
 
 # Evaluation
@@ -77,8 +82,9 @@ python sweep_offense_retrieval_fast.py   # baseline single-config run by default
 
 ## Architecture
 
-Four scripts form a strict linear pipeline; everything else either evaluates/tunes one of its stages, or
-(`mvp-v1.py`) drives all three end-to-end as a smoke test.
+Four scripts form the core linear pipeline; everything else either evaluates/tunes one of its stages, or
+(`mvp-v1.py`) drives Stages 1-3 end-to-end as a smoke test. A fifth script, `plan_enhancing.py` (Stage
+2.5), sits between Stage 2 and Stage 3 but is optional and manual — `mvp-v1.py` does not call it.
 
 ```
 data/raw/enterprise-attack/enterprise-attack.json (STIX bundle)
@@ -87,6 +93,7 @@ data/raw/enterprise-attack/enterprise-attack.json (STIX bundle)
   -> query_offense_index.py        (hybrid vector+BM25 retrieval, called by everything below)
   -> generate_offense_rag.py       STAGE 1: query decomposition + Gemini technique linking + citation validation
   -> plan_tasks.py                 STAGE 2: LM Studio (Gemini-fallback) task planning + deterministic Python validation
+  -> plan_enhancing.py             STAGE 2.5 (optional, manual): adds per-task narrative context; not called by mvp-v1.py
   -> generate_code.py              STAGE 3: per-task Python file generation via local LM Studio
 ```
 
@@ -147,6 +154,36 @@ credential-harvesting example caused generated plans to anchor on a near-identic
 the query; the example now also links two tasks to demonstrate the `provides`/`consumes` contract
 concretely.
 
+Evidence retrieval (`ContextBuilder.fetch_attack_evidence`) is not a flat per-technique slice: canonical
+`technique_description`/`technique_overview` chunks are always included, while procedure-example chunks are
+embedded and ranked by cosine similarity against the specific Stage 1 sub-query/part that originally
+surfaced each technique (`technique_query_map`, built in `extract_stage1_elements`; falls back to the whole
+composite query for a technique with no known originating part), reusing Stage 1's embedding client and its
+`cache/query_cache.sqlite` cache (same `(normalized_query, provider, model)` key, via `hosted_embeddings.py`
+and `query_offense_index.py`'s cache helpers). Each technique gets an example-chunk slot budget scaled by
+how many candidates it has (`_example_slot_budget`: 1:1 up to 2 candidates, then 3/5/8 as the pool grows),
+and a global ceiling (`GLOBAL_MAX_EXAMPLE_CHUNKS = 24`) trims the lowest-priority examples first
+(alt-technique before top-technique, lowest relevance score before higher) if the combined budget across
+all techniques is still too large. Falls back to deterministic id-order selection, never raising, if the
+chunk-embedding index isn't available.
+
+### Stage 2.5 (`plan_enhancing.py`, optional)
+
+Not part of the core pipeline and not called by `mvp-v1.py` — a manual step that takes a finalized Stage 2
+plan (`data/plans/human_outs/PLAN_*.json`) and makes a single batch LLM call (same dual-backend pattern as
+Stage 2: LM Studio primary, Gemini fallback) to attach a 5-key `scenario_context` object to every task —
+`narrative_role`, `upstream_assumptions`, `downstream_contract`, `consistency_notes`, `non_goals` —
+describing how that task fits into the broader attack chain. The response is validated
+(`_validate_context_response`) to cover exactly the plan's task IDs with all 5 non-empty string keys per
+task, retrying up to `--max-retries` with the rejection reason appended to the prompt
+(`_append_repair_note`). Fail-open: if every retry fails, the original plan is written through unmodified
+and the manifest records `status: "degraded"` instead of blocking the pipeline; a successful run records
+`status: "enhanced"`. Output goes to `data/plans/enhanced_outs/PLAN_<stem>.json` — a separate directory from
+Stage 2's `data/plans/human_outs/` — and every run appends one record to
+`data/plans/enhanced_outs/enhancement_manifest.jsonl`. `scenario_context` is read opportunistically by
+Stage 3 (`task.get("scenario_context")`, see below) and is not part of the required-task-keys contract
+Stage 3 enforces, so plans that never go through Stage 2.5 are unaffected.
+
 ### Stage 3 (`generate_code.py`)
 
 Aborts unless the input plan's `tasks` array is non-empty and every task has all required keys (`task_id`,
@@ -169,8 +206,9 @@ overwritten. **Generated files can `import` sibling generated modules by filenam
 ### `hosted_embeddings.py`
 
 Shared embedding-provider abstraction. Imported by `build_offense_index.py`, `query_offense_index.py`,
-`decompose_query.py` (Stage 1's near-duplicate dedup when splitting a multi-intent query),
-`eval_offense_generation.py`, and `sweep_offense_retrieval_fast.py`.
+`decompose_query.py` (Stage 1's near-duplicate dedup when splitting a multi-intent query), `plan_tasks.py`
+(Stage 2's relevance-ranked evidence selection — see Stage 2 above), `eval_offense_generation.py`, and
+`sweep_offense_retrieval_fast.py`.
 Auto-detects provider from env vars (Google AI Studio -> Azure OpenAI -> OpenAI, in that priority) unless
 `EMBED_PROVIDER` is set explicitly. Three client classes (`OpenAIEmbeddingClient`,
 `AzureOpenAIEmbeddingClient`, `GoogleAIStudioEmbeddingClient`) each implement `embed_texts`.
