@@ -6,18 +6,28 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 HERMES is a diploma-thesis MVP: a research pipeline studying whether LLMs can write malicious code when
 given structured adversary knowledge via RAG. The intended design has 4 stages, of which the first 3 are
-implemented; **Stage 4 (sandboxed execution/validation) and a second RAG over malware-code samples do not
-exist yet** — the current Stage 3 code generation is task-conditioned only, not malware-sample-grounded.
+implemented and **Stage 4 (sandboxed execution/validation) is now partially built**: a static pre-flight
+validator (**Stage 4a**, `validate_scripts.py`) and a disposable network-isolated container import gate
+(**Tier 1**, `run_tier1_sandbox.py` + `tier1_runner.py` + `Dockerfile.tier1`) exist as standalone tools
+run against a finished Stage 3 run directory. They are **not yet wired into the pipeline chain** (neither
+`mvp-v1.py` nor anything else calls them automatically — you invoke them by hand). The heavier end of
+Stage 4 — a full behavioral sandbox (Cuckoo/CAPE) and a richer per-task-type/self-test oracle — still does
+not exist, and neither does the second RAG over malware-code samples: the current Stage 3 code generation
+is task-conditioned only, not malware-sample-grounded.
 
 All work in this repo must stay thesis-safe: isolated sandbox, no real exploit code, no operational attack
-instructions, no real targets/credentials/persistence/live C2/exfiltration. **This is a prompt-level
-instruction today, not a machine-checked one**: `data/config/stage2_constraints.json` only constrains
-structure (allowed task-type taxonomy, target language), and its `allowed_task_types` list explicitly
-permits `credential_access` and `c2_transport` as task categories — neither it nor Stage 2's validator
-scans task content for forbidden capabilities (see Architecture below). A `forbidden_capability_keywords`
-advisory scan existed in a prior schema version but was dropped when Stage 2 moved to the current schema
-v2.0. The only safety net enforced today is the Stage 1/Stage 3 prompts instructing the model to avoid
-step-by-step offensive detail and treat the work as sandboxed research — model compliance, not code.
+instructions, no real targets/credentials/persistence/live C2/exfiltration. **Content safety is still a
+prompt-level instruction, not a machine-checked one**: `data/config/stage2_constraints.json` only
+constrains structure (allowed task-type taxonomy, target language), and its `allowed_task_types` list
+explicitly permits `credential_access` and `c2_transport` as task categories — neither it nor Stage 2's
+validator scans task content for forbidden capabilities (see Architecture below). A
+`forbidden_capability_keywords` advisory scan existed in a prior schema version but was dropped when Stage 2
+moved to the current schema v2.0. The only *content* safety net enforced today is the Stage 1/Stage 3
+prompts instructing the model to avoid step-by-step offensive detail and treat the work as sandboxed
+research — model compliance, not code. What **is** now machine-enforced is *execution containment*: Tier 1
+runs each generated file inside a throwaway Docker container with no network, capped CPU/memory, a
+read-only rootfs and a non-root user, so running a generated file to the "does it import cleanly" floor no
+longer touches the host or the network. That boundary contains execution; it does not vet content.
 
 ## Commands
 
@@ -47,8 +57,17 @@ python plan_enhancing.py data/plans/human_outs/PLAN_<stage1-stem>.json
 # Stage 3: generate per-task Python files from a Stage 2 (or Stage 2.5-enhanced) plan (local LM Studio)
 python generate_code.py data/plans/human_outs/<stage2-timestamp>.json --timeout 1200
 
+# Stage 4a (standalone, manual — not called by mvp-v1.py): static pre-flight validation of a finished
+# Stage 3 run directory. No code is executed. --plan enables the provides/consumes contract check.
+python validate_scripts.py data/code_scripts/<run-dir> --plan data/plans/human_outs/PLAN_<stage1-stem>.json
+
+# Tier 1 (standalone, manual): build the base image once, then import each generated file inside a
+# disposable, network-isolated, resource-capped container. Requires Docker. Run after Stage 4a.
+docker build -f Dockerfile.tier1 -t hermes-tier1-base:latest .
+python run_tier1_sandbox.py data/code_scripts/<run-dir> --plan data/plans/human_outs/PLAN_<stage1-stem>.json
+
 # One-shot smoke-test driver: runs Stage 1 -> 2 -> 3 back-to-back for a query stored in a .txt file
-# (Stage 2.5 is not part of this chain)
+# (Stage 2.5 and Stage 4 are not part of this chain)
 python mvp-v1.py path/to/query.txt
 
 # Evaluation
@@ -79,12 +98,29 @@ python sweep_offense_retrieval_fast.py   # baseline single-config run by default
   every stage runs with its hardcoded defaults, and the whole run aborts on the first stage that raises.
   Expect this file to change shape or be deleted as the pipeline matures — treat it as a convenience
   integration check, not a stable entry point to build on.
+- `<run-dir>` for Stage 4a / Tier 1 is a Stage 3 output directory — the dir that holds the generated
+  `*.py` files plus `manifest.jsonl` (e.g. `data/code_scripts/stage3_<name>`). Stage 3's default
+  `--output-dir` is `data/code_scripts` itself, but in practice each run is pointed at its own
+  `stage3_<name>` subdirectory; the validators operate on whatever directory you hand them.
+- `validate_scripts.py` exits non-zero if any file fails, so it works as a gate; `--include-rejected` also
+  checks `incorrect_*.py` rejected drafts, and omitting `--plan` skips only the provides/consumes contract
+  check (compile + import-resolution checks still run). It writes `validation_manifest.jsonl` into the run
+  dir.
+- `run_tier1_sandbox.py` needs a working Docker daemon and the `hermes-tier1-base:latest` image (built from
+  `Dockerfile.tier1`). Per-file defaults: 15s wall-clock timeout (`--timeout`), `256m` memory
+  (`--memory`), 1 CPU (`--cpus`). A timeout is **not** counted as a failure (a long-lived listener with no
+  peer hits it by design); only an import that raises is. It writes `tier1_manifest.jsonl` into the run dir.
+  The base image ships with zero third-party packages on purpose — add one to `Dockerfile.tier1` and
+  rebuild only if `validate_scripts.py`'s missing-dependency list names it for a real run.
 
 ## Architecture
 
-Four scripts form the core linear pipeline; everything else either evaluates/tunes one of its stages, or
-(`mvp-v1.py`) drives Stages 1-3 end-to-end as a smoke test. A fifth script, `plan_enhancing.py` (Stage
-2.5), sits between Stage 2 and Stage 3 but is optional and manual — `mvp-v1.py` does not call it.
+Four scripts form the core linear pipeline; everything else either evaluates/tunes one of its stages,
+drives Stages 1-3 end-to-end as a smoke test (`mvp-v1.py`), or post-processes a finished Stage 3 run
+(the Stage 4a / Tier 1 validators). A fifth script, `plan_enhancing.py` (Stage 2.5), sits between Stage 2
+and Stage 3 but is optional and manual — `mvp-v1.py` does not call it. The Stage 4 validators
+(`validate_scripts.py`, `run_tier1_sandbox.py`) are likewise optional and manual, and share scope-aware AST
+primitives with Stage 3 via `pipeline_ast.py`.
 
 ```
 data/raw/enterprise-attack/enterprise-attack.json (STIX bundle)
@@ -95,6 +131,12 @@ data/raw/enterprise-attack/enterprise-attack.json (STIX bundle)
   -> plan_tasks.py                 STAGE 2: LM Studio (Gemini-fallback) task planning + deterministic Python validation
   -> plan_enhancing.py             STAGE 2.5 (optional, manual): adds per-task narrative context; not called by mvp-v1.py
   -> generate_code.py              STAGE 3: per-task Python file generation via local LM Studio
+  -> validate_scripts.py           STAGE 4a (optional, manual): execution-free static validation of a Stage 3 run dir
+  -> run_tier1_sandbox.py          TIER 1 (optional, manual): disposable network-isolated container import gate
+                                   (in-container runner: tier1_runner.py; image: Dockerfile.tier1)
+
+pipeline_ast.py                    shared scope-aware AST primitives, imported by generate_code.py (Stage 3)
+                                   and validate_scripts.py (Stage 4a)
 ```
 
 None of `eval_offense_retrieval.py`, `eval_offense_generation.py`, or `sweep_offense_retrieval_fast.py` are
@@ -196,12 +238,102 @@ already-generated dependency tasks (function/method bodies replaced with `docstr
 `_compact_dependency_code`) so prompt size stays bounded as dependency chains grow. The model must reply
 with nothing but a single fenced ```python code block containing the complete file — there is no
 `FILENAME:` line in the contract; the output filename comes entirely from the plan's own
-`suggested_filename` (sanitized, then prefixed with the task ID). The reply is validated with `ast.parse`;
-retried up to `--max-attempts` on any violation. Resumable: skips tasks already `"generated"` in
-`manifest.jsonl` whose output file still exists, reusing that file as dependency context. Every attempt
-(success or failure) is appended to `data/code_scripts/manifest.jsonl` — an append-only audit trail, never
-overwritten. **Generated files can `import` sibling generated modules by filename** — renaming a file under
-`data/code_scripts/` requires grepping every other generated file for imports of the old name.
+`suggested_filename` (sanitized, then prefixed with the task ID). The reply then passes a three-step
+accept gate, each step retried up to `--max-attempts` on failure: (1) `_parse_response` — a fenced
+```python block that is non-empty and `ast.parse`s; (2) `_inject_dependency_imports` — a deterministic
+rewrite of the sibling-import lines (see below); (3) `_validate_contract` — the provides/consumes
+contract backstop. Resumable: skips tasks already `"generated"` in `manifest.jsonl` whose output file
+still exists, reusing that file as dependency context. Every attempt (success or failure) is appended to
+`data/code_scripts/manifest.jsonl` — an append-only audit trail, never overwritten. **Generated files can
+`import` sibling generated modules by filename** — renaming a file under `data/code_scripts/` requires
+grepping every other generated file for imports of the old name.
+
+A Stage 2 plan is effectively one multi-file program sliced into tasks, stitched together by the
+`provides`/`consumes` symbol contract and the `dependencies` edges — but each file is generated by a small
+local model in isolation, which routinely gets the cross-file glue wrong (redeclaring a symbol it should
+import, importing from the wrong module, or writing a non-portable `from data.code_scripts.<run>.TASK_001_x
+import Y` path that only resolves with the repo root on `sys.path`). The correct import is fully derivable
+from information the pipeline already has — the plan's edges plus each already-generated dependency's real
+on-disk module stem (`_dependency_module_stems`) — so Stage 3 does not ask the model to get it right and
+merely check it. `_resolve_symbol_sources` maps each consumed symbol to the dependency stem that provides
+it; `_inject_dependency_imports` then deletes whatever top-level sibling-import line(s) the model wrote
+(recognizing all three forms seen in practice via `pipeline_ast.sibling_stem_from_import`) and prepends one
+canonical `from <stem> import <symbols>` line per consumed dependency. It edits exact source line ranges so
+every untouched line survives byte-for-byte, inserts after the module docstring and any `__future__`
+imports, leaves imports nested in a `try/except` fallback alone, and self-checks with `ast.parse`, falling
+back to the model's original text on any doubt — the injector is never allowed to be what breaks an
+otherwise-valid file. `_validate_contract` is the backstop for what injection can't fix: a `provides`
+symbol must actually be *defined* (an import alone doesn't make this task its provider), and a `consumes`
+symbol must be imported from the specific providing dependency, not redeclared locally, left unbound, or
+sourced from the wrong module — using the shared scope-aware collectors in `pipeline_ast.py` (and
+exempting the `try: import X / except ImportError: def X(): ...` optional-dependency idiom from the
+"defined and imported at once" ambiguity check).
+
+### Stage 4a (`validate_scripts.py`, optional/manual)
+
+Execution-free static pre-flight over a whole Stage 3 run directory, meant to run after Stage 3 and before
+any dynamic execution (Tier 1, then Cuckoo/CAPE) so cheap deterministic checks catch what they can before
+paying for an execution environment. **Nothing is ever executed or imported here** — it only reads and
+parses. `_resolve_candidates` builds the file set from the generation `manifest.jsonl` (status
+`"generated"`) first, then adds any other `*.py` in the directory as `"untracked"` (recovering its
+`task_id` by filename-prefix match against the supplied plan) — so hand-edited files that never went
+through Stage 3 at all are still validated. Per file, `_check_file` runs: L1 `compile()` (a stricter
+superset of `ast.parse` — it also rejects e.g. `return`/`yield` outside a function); L2/L3 import
+classification over **every** import site in the file (not just module scope — a third-party import inside
+a function still needs the package installed), splitting imports into stdlib / sibling / third-party,
+resolving third-party ones with `importlib.util.find_spec` and sibling ones against the actual `*.py`
+files present (`missing_sibling`, `non_portable_import` warning for a repo-root-anchored path,
+`relative_import` fail); and L3b, which confirms a sibling `from X import a, b` actually finds `a`/`b` as
+real module attributes of `X` (checking only top-level `ImportFrom` statements). When a `--plan` is given
+and L1 passed, it then re-applies Stage 3's own `_validate_contract` to whatever is on disk (reusing that
+exact function so the two never drift). Each file gets a `pass`/`warn`/`fail` verdict; one record per file
+is appended to `validation_manifest.jsonl` in the run dir, and the process exits non-zero if any file
+failed (so it doubles as a gate). The contract portion of this is **deliberately** redundant with Stage 3's
+generation-time check for a pristine `"generated"` file (same bytes, same function, same verdict) — kept on
+purpose, not an oversight to optimize away: it is a microsecond AST pass (the other four checks are *not*
+redundant even on a clean run — a per-file generator can't see cross-file or environment facts), and it
+keeps the gate correct for the inputs it actually exists to cover (hand-edited, untracked, or older-run
+files). See `docs/STAGE4_A_STATIC_VALIDATION.md` ("On deliberately re-running the contract check").
+
+### Tier 1 (`run_tier1_sandbox.py` + `tier1_runner.py` + `Dockerfile.tier1`, optional/manual)
+
+The fast, disposable, network-isolated execution gate that sits strictly between Stage 4a and any
+Cuckoo/CAPE submission — the "runs without errors" floor oracle (rung 3/4 of the functional-code ladder):
+it proves each file's module-level code executes cleanly, not that its behavior is correct (that is
+Cuckoo/CAPE's job, and eventually a richer per-task-type or self-test oracle's). It reuses Stage 4a's
+`_resolve_candidates`/`_load_stage2_plan` to pick the same file set, then for each file runs a throwaway
+container (`docker run -d`, image `hermes-tier1-base:latest`) with `--network none`, `--memory 256m`,
+`--cpus 1`, `--read-only` rootfs + a small `/tmp` tmpfs and the run dir mounted read-only at `/task` (no
+writable host mount at all). Inside, `tier1_runner.py` imports exactly one file via
+`importlib.util.spec_from_file_location` + `exec_module` (with the target's own directory on `sys.path[0]`,
+mirroring `python <file>.py`, which is what lets the bare-stem sibling imports resolve), redirects the
+target's own stdout/stderr to a throwaway buffer so it can't pollute the result, and emits a single JSON
+object — outcome `import_ok` or `import_error` (+ exception type/message/traceback) — on its stdout,
+bracketed by a per-invocation random sentinel. The two other outcomes are decided host-side, never by the
+runner: `timeout` (the host killed a container still running past the per-file wall-clock limit) and
+`runner_error` (a container/transport failure, or no sentinel found in the logs). The host runs the
+container detached and controls cleanup itself (`docker wait` with a per-file timeout -> `docker kill` on a
+hang -> recover the result from `docker logs` -> `docker rm -f` always), so disposal never races `--rm`. The result
+travels on the container's **stdout**, not a shared file, on purpose: on Docker Desktop a host bind mount
+can hand back a file the host user can't read, and `docker cp` can't read a volume/tmpfs out of a stopped
+container — `docker logs` sidesteps both (see `docs/STAGE4_A_STATIC_VALIDATION.md`). A `timeout` is
+deliberately **not** a failure (a long-lived `c2_transport`-style listener with no peer hits it every time
+by design). One record per file is appended to `tier1_manifest.jsonl` in the run dir; exits non-zero only
+if some file's import raised.
+
+### `pipeline_ast.py`
+
+Shared, execution-free AST primitives for inspecting generated Python files, imported by `generate_code.py`
+(Stage 3's generation-time contract check) and `validate_scripts.py` (Stage 4a) so both apply **identical**
+module-scope semantics instead of two drifting copies. The key subtlety is scope-awareness:
+`collect_module_level_defs` and `collect_module_level_imports` descend through module-scope control flow
+(`if`/`try`/`with`/`for`/`while`) but stop at any `def`/`class` boundary, because only module-scope names
+become importable attributes of the module — while `iter_all_import_statements` is deliberately *not*
+scope-aware (a package imported only inside a function still has to be installed). `sibling_stem_from_import`
+recognizes the three sibling-import forms seen in this corpus (bare stem, repo-root-anchored dotted path,
+explicit relative import) against the stems that actually exist in the run, and
+`collect_optional_dependency_fallback_names` recognizes the `try: import X / except ImportError: def X()`
+idiom so a name legitimately both imported and defined there isn't flagged as a collision.
 
 ### `hosted_embeddings.py`
 
@@ -221,10 +353,19 @@ Auto-detects provider from env vars (Google AI Studio -> Azure OpenAI -> OpenAI,
   every run (valid or invalid), while the human `.json` is only written when validation succeeds, and its
   existence (not a status field inside it) is what gates Stage 3.
 - LLM output is never trusted structurally — Stage 2's validator and Stage 3's `ast.parse`/fenced-code-block
-  checks always gate model output in plain Python before it is persisted or used downstream.
+  checks always gate model output in plain Python before it is persisted or used downstream. Where a correct
+  answer is *derivable* rather than a matter of model judgment (e.g. which module a consumed symbol must be
+  imported from), Stage 3 computes and injects it deterministically instead of prompting for it and then
+  grading the result (`_inject_dependency_imports`).
+- Scope-aware AST analysis of generated files lives in one place (`pipeline_ast.py`) and is shared by
+  Stage 3's generation-time contract check and Stage 4a's static validator; keep the policy itself single-
+  sourced too (Stage 4a imports Stage 3's `_validate_contract` rather than reimplementing it) so the
+  generation-time and post-hoc checks can't drift apart.
 - Every generation attempt (success or failure) is recorded, never silently discarded: `manifest.jsonl` for
   Stage 3, and a flat `errors` list on each Stage 2 machine record (there is no separate
-  `blocking_violations`/`advisories` split in the current schema).
+  `blocking_violations`/`advisories` split in the current schema). The Stage 4 validators follow the same
+  append-only-manifest convention, one record per file, written into the run dir they were pointed at:
+  `validation_manifest.jsonl` (Stage 4a) and `tier1_manifest.jsonl` (Tier 1).
 - Retrieval defaults (`vector_k=25, bm25_k=25, lexical_weight=0.05`) are a checked-in standard across every
   entry point; deviations for one-off experiments should be recorded next to that experiment's output
   rather than changing the shared defaults.

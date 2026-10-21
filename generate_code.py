@@ -17,6 +17,14 @@ from pathlib import Path
 
 import requests
 
+from pipeline_ast import (
+    collect_module_level_defs,
+    collect_module_level_imports,
+    collect_optional_dependency_fallback_names,
+    collect_referenced_names,
+    sibling_stem_from_import,
+)
+
 DEFAULT_BASE_URL = "http://localhost:1234/v1"
 DEFAULT_MODEL = "qwen3.8-9b-heretic-uncensored-nvfp4"
 DEFAULT_MAX_TOKENS = 16384
@@ -187,17 +195,27 @@ def _compact_dependency_code(code: str) -> str:
     return ast.unparse(stubbed)
 
 
+def _dependency_module_stems(task: dict, generated: dict[str, dict]) -> dict[str, str]:
+    # Real output module stem per declared dependency, for dependencies already generated.
+    stems: dict[str, str] = {}
+    for dep_id in task.get("dependencies") or []:
+        dep = generated.get(dep_id)
+        if dep is not None:
+            stems[dep_id] = Path(dep["filename"]).stem
+    return stems
+
+
 def _build_task_prompt(task: dict, generated: dict[str, dict]) -> str:
     # Assembles the single-shot prompt for one task: sandbox rules, response format, task spec, dependency interfaces.
     # Show dependency interfaces (bodies stubbed) so field/function names stay consistent across files.
+    dep_stems = _dependency_module_stems(task, generated)
     dep_sections = []
     for dep_id in task.get("dependencies") or []:
         dep = generated.get(dep_id)
         if dep is None:
             continue
-        module_stem = Path(dep["filename"]).stem
         dep_sections.append(
-            f"--- Dependency {dep_id}, module `{module_stem}` (file {dep['filename']}) ---\n"
+            f"--- Dependency {dep_id}, module `{dep_stems[dep_id]}` (file {dep['filename']}) ---\n"
             f"{_compact_dependency_code(dep['code'])}"
         )
 
@@ -230,15 +248,7 @@ def _build_task_prompt(task: dict, generated: dict[str, dict]) -> str:
             "Map each consumed symbol to the dependency module that provides it, using this format:",
             "  from TASK_NNN_module_name import symbol_name",
         ]
-        # Build a map of which dependency provides which symbol from the plan context.
-        import_map = {}
-        for dep_id in dependencies:
-            dep = generated.get(dep_id)
-            if dep:
-                module_stem = Path(dep["filename"]).stem
-                # Try to extract provides from the dependency info if available
-                # For now, document the pattern even if we can't fully map it
-                import_map[dep_id] = module_stem
+        import_map = dep_stems
 
         if import_map:
             lines += ["", "Dependency module mappings:"]
@@ -329,10 +339,173 @@ def _call_lmstudio(*, prompt: str, model: str, base_url: str, timeout: int, max_
     return payload["choices"][0]["message"]["content"], _extract_diagnostics(payload, wall_time_s)
 
 
+def _resolve_symbol_sources(task: dict, tasks_by_id: dict[str, dict], dep_stems: dict[str, str]) -> dict[str, str]:
+    # Which dependency's module actually provides each symbol, per the plan (not the generated
+    # code). Shared by the contract check below and the deterministic import injector, so both
+    # agree on exactly where a consumed symbol is supposed to come from. Known limitation, accepted:
+    # a dependency missing from `dep_stems` (failed to generate) leaves its provided symbols with
+    # no entry here, so a caller can't fix or flag an import of them against a real module.
+    symbol_source: dict[str, str] = {}
+    for dep_id in task.get("dependencies") or []:
+        dep_stem = dep_stems.get(dep_id)
+        if dep_stem is None:
+            continue
+        for symbol in (tasks_by_id.get(dep_id) or {}).get("provides") or []:
+            symbol_source.setdefault(symbol, dep_stem)
+    return symbol_source
+
+
+def _inject_dependency_imports(code: str, task: dict, tasks_by_id: dict[str, dict], dep_stems: dict[str, str]) -> str:
+    # Deterministically fixes sibling imports instead of hoping the model gets them right: the plan's
+    # provides/consumes edges plus each dependency's real on-disk stem already say exactly what every
+    # sibling import line must be, so there's no need to ask a 9B model to get that right and then
+    # just check it. Removes whatever top-level `from <sibling> import ...` line(s) the model wrote
+    # for this task's dependencies — recognizing any of the three forms seen in practice (portable
+    # bare stem, repo-root-anchored dotted path, or a relative import) — then prepends one canonical
+    # `from <stem> import <symbols>` line per dependency actually consumed, grouped and ordered by
+    # the plan's own 'consumes' list. Operates on exact source line ranges so every untouched line
+    # (comments, formatting, unrelated imports, code) survives byte-for-byte. Only direct top-level
+    # ImportFrom statements are touched — one nested in a try/except (a pattern the Stage 3 prompt
+    # doesn't ask for) is left alone rather than risk mangling a deliberate fallback block; worst
+    # case that symbol ends up imported twice, which is harmless. Falls back to the original code
+    # untouched if there's nothing safe to inject, or if the rewritten result would fail to parse —
+    # this patch is never allowed to be the thing that breaks an otherwise-valid file.
+    consumes = task.get("consumes") or []
+    if not consumes or not dep_stems:
+        return code
+
+    symbol_source = _resolve_symbol_sources(task, tasks_by_id, dep_stems)
+    known_stems = set(dep_stems.values())
+
+    symbols_by_stem: dict[str, list[str]] = {}
+    for symbol in consumes:
+        stem = symbol_source.get(symbol)
+        if stem is not None:
+            symbols_by_stem.setdefault(stem, []).append(symbol)
+    if not symbols_by_stem:
+        return code  # no consumed symbol maps to a known dependency; nothing safe to inject
+
+    canonical_lines = [f"from {stem} import {', '.join(symbols)}" for stem, symbols in symbols_by_stem.items()]
+
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return code  # _parse_response already guarantees this parses; defensive only
+
+    delete_ranges: list[tuple[int, int]] = []
+    for node in tree.body:
+        if isinstance(node, ast.ImportFrom):
+            stem = sibling_stem_from_import(node.module, node.level, known_stems)
+            if stem is not None:
+                delete_ranges.append((node.lineno, node.end_lineno))
+
+    lines = code.splitlines()
+    delete_line_nos = {ln for start, end in delete_ranges for ln in range(start, end + 1)}
+    kept_lines = [line for i, line in enumerate(lines, start=1) if i not in delete_line_nos]
+
+    # Insert right after the module docstring (if any) and any `from __future__` imports — matching
+    # where Python requires __future__ imports to stay, and where the model's own docstring (if any)
+    # starts the file. Neither can ever fall inside delete_line_nos (a docstring/__future__ import is
+    # never itself a sibling import), so translating this position into kept_lines is always safe.
+    insert_at = 0
+    first = tree.body[0] if tree.body else None
+    if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant) and isinstance(first.value.value, str):
+        insert_at = first.end_lineno or 0
+    for node in tree.body:
+        if isinstance(node, ast.ImportFrom) and node.module == "__future__":
+            insert_at = max(insert_at, node.end_lineno or 0)
+    kept_insert_at = sum(1 for i in range(1, insert_at + 1) if i not in delete_line_nos)
+
+    new_lines = kept_lines[:kept_insert_at] + canonical_lines + kept_lines[kept_insert_at:]
+    new_code = "\n".join(new_lines)
+
+    try:
+        ast.parse(new_code)
+    except SyntaxError:
+        return code  # self-check failed; prefer the model's original over a corrupted patch
+
+    return new_code
+
+
+def _validate_contract(code: str, task: dict, tasks_by_id: dict[str, dict], dep_stems: dict[str, str]) -> None:
+    # Enforces the plan's provides/consumes contract end-to-end: a symbol this task promises must
+    # actually be defined (an import alone doesn't make it this task's provider), and a symbol it
+    # borrows must be imported from the specific dependency that actually provides it — not
+    # redeclared, not left unbound, and not sourced from the wrong module. Runs after
+    # _inject_dependency_imports, so the sibling-import half of this is normally already fixed by
+    # construction; this remains the backstop for what injection can't fix — a symbol no dependency
+    # actually provides, or one redeclared locally despite being marked consumed.
+    tree = ast.parse(code)
+    defined = collect_module_level_defs(tree)
+    imported_from, has_star = collect_module_level_imports(tree)
+    referenced = collect_referenced_names(tree)
+    fallback_names = collect_optional_dependency_fallback_names(tree)
+    symbol_source = _resolve_symbol_sources(task, tasks_by_id, dep_stems)
+
+    violations: list[str] = []
+
+    for symbol in task.get("provides") or []:
+        if symbol in fallback_names:
+            # `try: from fast_impl import X / except ImportError: def X(): ...` — a deliberate
+            # either/or, not the ambiguous "defined and imported at the same level" case below.
+            continue
+        is_defined = symbol in defined
+        is_imported = symbol in imported_from
+        if is_defined and is_imported:
+            violations.append(
+                f"`{symbol}` is declared in provides but is both locally defined and imported "
+                f"(from `{imported_from[symbol]}`) — ambiguous; keep only the local definition"
+            )
+        elif is_imported:
+            violations.append(
+                f"`{symbol}` is declared in provides but only imported (from `{imported_from[symbol]}`), "
+                "never defined — importing a symbol doesn't make this task its provider"
+            )
+        elif not is_defined:
+            violations.append(f"`{symbol}` is declared in provides but never defined anywhere in the file")
+
+    if not has_star:
+        for symbol in task.get("consumes") or []:
+            is_defined = symbol in defined
+            is_imported = symbol in imported_from
+            correct_module = symbol_source.get(symbol)
+            target = f"`{correct_module}`" if correct_module else "the dependency that provides it"
+
+            if is_defined and is_imported:
+                violations.append(
+                    f"`{symbol}` is declared in consumes but is both locally defined and imported "
+                    f"(from `{imported_from[symbol]}`) — ambiguous; keep only the import from {target}"
+                )
+            elif is_defined:
+                violations.append(
+                    f"`{symbol}` is redeclared instead of imported — remove this definition and add "
+                    f"`from {correct_module or '<dependency module>'} import {symbol}` instead"
+                )
+            elif is_imported:
+                actual_module = imported_from[symbol]
+                if correct_module and actual_module != correct_module:
+                    violations.append(
+                        f"`{symbol}` is imported from `{actual_module}` instead of {target} — "
+                        "use the bare module stem so the import resolves regardless of working directory"
+                    )
+            elif symbol in referenced:
+                violations.append(
+                    f"`{symbol}` is used without being imported or defined (NameError at runtime) — "
+                    f"import it from {target}"
+                )
+
+    if violations:
+        raise _ResponseRejected(
+            "generated code violates the plan's provides/consumes contract: " + "; ".join(violations),
+            code=code,
+        )
+
+
 def _generate_task(
     *,
     task: dict,
     generated: dict[str, dict],
+    tasks_by_id: dict[str, dict],
     model: str,
     base_url: str,
     timeout: int,
@@ -360,6 +533,9 @@ def _generate_task(
 
         try:
             code = _parse_response(text)
+            dep_stems = _dependency_module_stems(task, generated)
+            code = _inject_dependency_imports(code, task, tasks_by_id, dep_stems)
+            _validate_contract(code, task, tasks_by_id, dep_stems)
             return code, attempt, None, last_diagnostics, None
         except _ResponseRejected as exc:
             last_error = str(exc)
@@ -420,6 +596,7 @@ def main() -> None:
             code, attempts, error, diagnostics, rejected_code = _generate_task(
                 task=task,
                 generated=generated,
+                tasks_by_id=tasks_by_id,
                 model=args.model,
                 base_url=args.base_url,
                 timeout=args.timeout,

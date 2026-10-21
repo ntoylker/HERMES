@@ -1,0 +1,19 @@
+# Tier 1 (fast pre-sandbox execution gate): a minimal, disposable image for running one generated
+# file's import inside tight isolation (no network, capped CPU/memory, read-only rootfs, non-root).
+# Intentionally has NO third-party packages installed by default — the entire corpus seen so far
+# is pure standard library. If validate_scripts.py's missing-dependency list ever names one for a
+# real run, add it below and rebuild; don't add anything speculatively.
+FROM python:3.14-slim
+
+RUN useradd --create-home --uid 1000 tier1
+
+# --- third-party packages for generated code, only ever added here when validate_scripts.py's
+# missing-dependency list says a real run actually needs one: ---
+# RUN pip install --no-cache-dir <package>==<version>
+
+COPY tier1_runner.py /task_runner/tier1_runner.py
+
+USER tier1
+WORKDIR /task
+
+ENTRYPOINT ["python", "/task_runner/tier1_runner.py"]
