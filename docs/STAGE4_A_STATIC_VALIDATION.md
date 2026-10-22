@@ -236,3 +236,42 @@ root-owned (so the non-root runner can't write it) and can't be read with `docke
 container anyway. Routing the result over stdout avoids the filesystem — and thus the file-sharing layer
 and container/host uid mismatch — entirely. The runner redirects the imported module's own stdout/stderr to
 a discard buffer first, so module output can't collide with the sentinel-wrapped result line.
+
+## Tier 1 — current limitations and validity boundary
+
+Tier 1 **imports** each file (`exec_module`) and reports whether module-level code loaded; it never calls
+the module's functions and — because it imports rather than runs as `__main__` — never executes an
+`if __name__ == "__main__":` block. A green (`import_ok`) verdict therefore licenses exactly one claim:
+*the file is structurally sound and loads cleanly in isolation.* It does **not** establish that the code
+does what the task intended. This matters for any dataset label derived from the pipeline — a green Tier 1
+is evidence of *loadable code*, not of *capability*.
+
+**Truly tested today:**
+
+- the file parses, compiles, and its module-level code runs without raising;
+- imports resolve at load (missing sibling module, missing third-party dependency, a `provides`/`consumes`
+  break that only bites at import time);
+- module-level statements don't crash, and nothing blocks at import (a listener bound at module scope, or a
+  top-level sleep/`input`, hits the wall-clock `timeout`).
+
+**Not tested — a green verdict says nothing about these (this is the rung-4 gap):**
+
+- **Behavior / functional correctness.** Logic behind `def`/`__main__` is never exercised; a reverse shell
+  that is broken, a no-op, or fully working all import identically. The reference run went 6/6 `import_ok`
+  in ~0.03–0.15 s precisely because the behavior lives in functions Tier 1 never called.
+- **Anything needing the network.** `--network none` means no connect-back, C2 handshake, reachable
+  listener, DNS, or exfil — so the defining behavior of a `c2_transport` / reverse-shell task is
+  structurally unobservable here.
+- **Interaction/sessions, persistence, privilege, and OS/kernel effects** — there is no peer or victim, the
+  rootfs is read-only and ephemeral, the user is non-root, and the guest is a Linux `python:3.14-slim`
+  image.
+- **Platform-mismatched techniques.** A Windows-targeted task can import cleanly on the Linux base image
+  while being meaningless to test there — a pure false-green from the wrong guest OS.
+- **Any side effect at all**, because Tier 1 has no behavioral instrumentation (no syscall / network /
+  filesystem capture); it observes only "did the import raise?".
+
+The properties that make Tier 1 safe (`--network none`, no target, read-only, ephemeral) are the same ones
+that cap what it can prove. A green Tier 1 must not be read as "the generated code works" — it means "it
+loads." Establishing *attempted or observed behavior* is the job of the not-yet-built rung 4 (behavioral
+detonation under observation), and field efficacy against a real target is deliberately out of scope for
+every sealed stage of this pipeline.
