@@ -1,6 +1,6 @@
 # Stage 3 Code Generation
 
-`generate_code.py` turns a Stage 2 task plan (schema v2.0) into one Python file per task. Each task is sent to a **local LM Studio** model (via its OpenAI-compatible `/v1/chat/completions` endpoint) as an independent chat request; the script parses, syntax-checks, **deterministically fixes the reply's sibling imports, verifies it against the plan's symbol contract**, persists it, then moves to the next task in dependency order.
+`generate_code.py` turns a Stage 2 task plan (schema v2.0) into one Python file per task. Each task is sent to a **local LM Studio** model (via its OpenAI-compatible `/v1/chat/completions` endpoint) as an independent chat request; the script parses, syntax-checks, **deterministically fixes the reply's sibling imports, verifies it against the plan's symbol contract, and checks it for undeclared names**, persists it, then moves to the next task in dependency order.
 
 A Stage 2 plan is really a single multi-file program sliced into tasks, held together by the `provides`/`consumes` symbol contract and the `dependencies` edges. Because each file is generated independently by a small local model, the model frequently gets the cross-file glue wrong — redeclaring a symbol it was supposed to import, importing from the wrong module, or writing a non-portable import path. Rather than prompt the model for these and hope, Stage 3 computes the correct imports from information it already has and rewrites them in place; see [Cross-file contract enforcement](#cross-file-contract-enforcement) below.
 
@@ -23,11 +23,12 @@ The plan (not the model) fixes each task's output filename via `suggested_filena
 ```
 ````
 
-A reply passes through a three-step accept gate before it is kept, and failing any step rejects the whole attempt:
+A reply passes through a four-step accept gate before it is kept, and failing any step rejects the whole attempt:
 
 1. **`_parse_response`** — rejects a reply that is missing a fenced code block, has an empty code block, or fails `ast.parse` (a syntax error).
-2. **`_inject_dependency_imports`** — deterministically rewrites the sibling-import lines (see below); this step never rejects on its own, but the code it produces is what the next step checks.
+2. **`_inject_dependency_imports`** — deterministically rewrites the sibling-import lines (see below); this step never rejects on its own, but the code it produces is what the next steps check.
 3. **`_validate_contract`** — rejects code that violates the plan's `provides`/`consumes` symbol contract (see below).
+4. **`_check_undeclared_names`** — rejects code that reads, inside some function or class body, a name that is never imported, never defined at module level, and isn't a builtin (see [Undeclared-name check](#undeclared-name-check) below).
 
 A rejected reply is retried with a repair note (the specific rejection reason) appended to the same prompt, up to `--max-attempts` times; a task that still fails is recorded as `"failed"` and generation continues with the next task. When a task is finally rejected, its last attempt's code is still saved as `incorrect_<name>.py` (kept out of the resume/skip scan) so a later correction pass can pick it up.
 
@@ -43,6 +44,27 @@ The plan assigns each task a `provides` set (symbols this file must define and e
 - every `consumes` symbol is **imported from the specific dependency that provides it** — not redeclared locally, not left unbound (used as a bare name with no binding → runtime `NameError`), and not imported from the wrong module.
 
 The `try: from fast_impl import X / except ImportError: def X(): ...` optional-dependency idiom is recognized (`collect_optional_dependency_fallback_names`) and exempted from the "defined and imported at once" ambiguity complaint, since exactly one branch ever executes. A violation raises with a specific, human-readable reason that becomes the repair note for the next attempt.
+
+## Undeclared-name check
+
+Step 4 of the accept gate, `_check_undeclared_names`, catches a class of `NameError` that none of the first three steps can see: a name read inside one function or class body that is never imported, never bound at module level, and isn't a builtin — e.g. a name assigned in one method and read only in a sibling method, or a stdlib module used but never imported anywhere. It runs after `_validate_contract` and operates on the already-injected code.
+
+It delegates to `pipeline_ast.find_undeclared_names(source)`, which is built on Python's own `symtable` module rather than a hand-rolled scope walk: it builds the module's `symtable.symtable(...)` table, walks every descendant scope (every function, class, and nested function), and flags any symbol that is `is_referenced()` and `is_global()` in that scope (read as a global, not a local) unless it is bound at module level (assigned or imported, per `symtable`'s own per-symbol flags), declared `global` and assigned inside some function (a real runtime module binding), one of Python's implicit module names (`__file__`, `__cached__`, `__builtins__`, `__class__`), or a `builtins` attribute. `_check_undeclared_names` wraps `ast.parse`'s `SyntaxError` the same way `_parse_response` does (since `compile()`-only-rejected constructs like a top-level `return` can still slip past `ast.parse`), then raises `_ResponseRejected` listing every undeclared name, its reading scope, and the line it's read on.
+
+**Known false-positive case: `from X import *`.** `find_undeclared_names` returns a second value, `unverifiable`, which is `True` when the file has a module-scope `from X import *` — `symtable` has no symbol entry for a name a star-import brings in, since the compiler can't know those names statically. `_check_undeclared_names` receives this value but does not act on it (bound to `_unverifiable`, never read) — despite its own inline comment stating this case is "skipped," the check runs unconditionally regardless of a star import's presence. In practice this means a name genuinely supplied by a star import, but read only inside a function or class body, is misclassified as undeclared and can cause a false-positive rejection. Verified directly:
+
+```python
+>>> import pipeline_ast
+>>> pipeline_ast.find_undeclared_names('''
+... from os.path import *
+...
+... def f():
+...     return join("a", "b")
+... ''')
+([(4, 'function `f`', 'join')], True)
+```
+
+`join` is undeclared only because `symtable` cannot attribute it to the star import — not because the generated file is actually broken. Stage 4a's static validator ([STAGE4_A_STATIC_VALIDATION.md](STAGE4_A_STATIC_VALIDATION.md)) calls the same function for its own L4 check and has the identical limitation: it still emits a `fail` finding for the false positive, and only adds a separate, informational `warn` finding (`unverifiable_names`) alongside it — that `warn` does not suppress the `fail`.
 
 ## Run
 
@@ -90,4 +112,4 @@ Stage 2 produces an ordered, evidence-grounded task plan without writing any sou
 
 ## Relationship to Stage 4
 
-Stage 4a ([STAGE4_A_STATIC_VALIDATION.md](STAGE4_A_STATIC_VALIDATION.md)) is an execution-free static validator run over a finished Stage 3 run directory. It re-applies this stage's own `_validate_contract` (imported directly from `generate_code.py`, not reimplemented) to whatever is actually on disk, plus compile and import-resolution checks Stage 3 doesn't do. A file produced by an up-to-date Stage 3 should pass Stage 4a's contract and sibling-import checks by construction; Stage 4a still earns its place by catching hand-edited files that bypassed generation, cross-file problems a per-file generator can't see, and uninstalled third-party dependencies. Tier 1 then imports each file inside a disposable, network-isolated container as the first machine-enforced execution boundary in the pipeline. Neither Stage 4 tool is wired into the automated chain — both are run manually.
+Stage 4a ([STAGE4_A_STATIC_VALIDATION.md](STAGE4_A_STATIC_VALIDATION.md)) is an execution-free static validator run over a finished Stage 3 run directory. It re-applies this stage's own `_validate_contract` (imported directly from `generate_code.py`, not reimplemented) and the same `pipeline_ast.find_undeclared_names` this stage's step 4 uses, to whatever is actually on disk — plus compile and import-resolution checks Stage 3 doesn't do, which only make sense run after the whole directory exists (e.g. verifying a sibling module Stage 3 itself generated really defines the symbol another file imports from it). A file produced by an up-to-date Stage 3 should pass Stage 4a's contract, undeclared-name, and sibling-import checks by construction; Stage 4a still earns its place by catching hand-edited files that bypassed generation, cross-file problems a per-file generator can't see, and uninstalled third-party dependencies. Tier 1 then imports each file inside a disposable, network-isolated container as the first machine-enforced execution boundary in the pipeline. Neither Stage 4 tool is wired into the automated chain — both are run manually.

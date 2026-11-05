@@ -15,6 +15,15 @@ Stage 4 — a full behavioral sandbox (Cuckoo/CAPE) and a richer per-task-type/s
 not exist, and neither does the second RAG over malware-code samples: the current Stage 3 code generation
 is task-conditioned only, not malware-sample-grounded.
 
+**Route change in progress, as of the `build_offense_corpus_linux.py` addition**: the project is pivoting
+to a Linux-only, Python-only scope, and all pipeline development going forward is meant to build on top of
+that rule rather than the original OS-agnostic corpus. `build_offense_corpus_linux.py` is the first artifact
+of that pivot — see Stage 0 under Architecture for the filter logic. It writes a parallel corpus/index pair
+(`data/processed/rag_offense_mitre_linux_chunks.jsonl`, `artifacts/offense_index_linux/`) alongside, not
+replacing, the original full-corpus artifacts, and **nothing downstream defaults to it yet** — every entry
+point still points at `artifacts/offense_index` unless `--index-dir artifacts/offense_index_linux` is passed
+explicitly. Treat the Linux-filtered pair as the intended future baseline, not a one-off experiment.
+
 All work in this repo must stay thesis-safe: isolated sandbox, no real exploit code, no operational attack
 instructions, no real targets/credentials/persistence/live C2/exfiltration. **Content safety is still a
 prompt-level instruction, not a machine-checked one**: `data/config/stage2_constraints.json` only
@@ -42,6 +51,11 @@ is activated):
 # Stage 0: build corpus + hybrid index (only needed once; artifacts already exist on disk normally)
 python build_offense_corpus.py --input data/raw/enterprise-attack/enterprise-attack.json --output data/processed/rag_offense_mitre_chunks.jsonl
 python build_offense_index.py --corpus data/processed/rag_offense_mitre_chunks.jsonl --outdir artifacts/offense_index --overwrite
+
+# Stage 0 (Linux-filtered variant -- ROUTE CHANGE: this pair is the intended future baseline, see
+# Project above and Architecture's Stage 0 section). Parallel artifacts, nothing below defaults to them yet.
+python build_offense_corpus_linux.py --input data/raw/enterprise-attack/enterprise-attack.json --output data/processed/rag_offense_mitre_linux_chunks.jsonl
+python build_offense_index.py --corpus data/processed/rag_offense_mitre_linux_chunks.jsonl --outdir artifacts/offense_index_linux --overwrite
 
 # Stage 1: retrieve + link a query to ATT&CK techniques
 python query_offense_index.py "abuse wmi to execute payload remotely" --index-dir artifacts/offense_index --top-techniques 10
@@ -77,6 +91,10 @@ python sweep_offense_retrieval_fast.py   # baseline single-config run by default
                                           # --vector-ks/--bm25-ks/--lexical-weights for an actual grid search
 ```
 
+- `build_offense_corpus_linux.py` is a thin wrapper around `build_offense_corpus.py`'s `build_offense_corpus()`
+  called with `platform="Linux"`; every other entry point (`query_offense_index.py`, `generate_offense_rag.py`,
+  both eval scripts) needs `--index-dir artifacts/offense_index_linux` passed explicitly to use the
+  Linux-filtered index instead of the default `artifacts/offense_index`.
 - `generate_code.py --timeout` defaults to 1200s; raise it if a task times out. At GPU-only speeds
   (~10 t/s) a full `--max-tokens` (8192) reply takes ~845s, so the 1200s default leaves margin even for a
   max-length generation — a shorter default would time out long generations before the token cap could cut
@@ -104,8 +122,8 @@ python sweep_offense_retrieval_fast.py   # baseline single-config run by default
   `stage3_<name>` subdirectory; the validators operate on whatever directory you hand them.
 - `validate_scripts.py` exits non-zero if any file fails, so it works as a gate; `--include-rejected` also
   checks `incorrect_*.py` rejected drafts, and omitting `--plan` skips only the provides/consumes contract
-  check (compile + import-resolution checks still run). It writes `validation_manifest.jsonl` into the run
-  dir.
+  check (compile, import-resolution, and the L4 undeclared-name check all still run regardless of `--plan`).
+  It writes `validation_manifest.jsonl` into the run dir.
 - `run_tier1_sandbox.py` needs a working Docker daemon and the `hermes-tier1-base:latest` image (built from
   `Dockerfile.tier1`). Per-file defaults: 15s wall-clock timeout (`--timeout`), `256m` memory
   (`--memory`), 1 CPU (`--cpus`). A timeout is **not** counted as a failure (a long-lived listener with no
@@ -125,7 +143,11 @@ primitives with Stage 3 via `pipeline_ast.py`.
 ```
 data/raw/enterprise-attack/enterprise-attack.json (STIX bundle)
   -> build_offense_corpus.py       -> data/processed/rag_offense_mitre_chunks.jsonl (chunked corpus)
-  -> build_offense_index.py        -> artifacts/offense_index/ (SQLite FTS5 + embeddings.npy, via hosted_embeddings.py)
+  -> build_offense_corpus_linux.py -> data/processed/rag_offense_mitre_linux_chunks.jsonl (Linux-filtered variant;
+                                   ROUTE CHANGE -- intended future baseline, not wired as any default yet)
+  -> build_offense_index.py        -> artifacts/offense_index/ or artifacts/offense_index_linux/
+                                   (SQLite FTS5 + embeddings.npy, via hosted_embeddings.py; same builder, pointed
+                                   at either corpus via --corpus/--outdir)
   -> query_offense_index.py        (hybrid vector+BM25 retrieval, called by everything below)
   -> generate_offense_rag.py       STAGE 1: query decomposition + Gemini technique linking + citation validation
   -> plan_tasks.py                 STAGE 2: LM Studio (Gemini-fallback) task planning + deterministic Python validation
@@ -149,6 +171,33 @@ only transitively. `sweep_offense_retrieval_fast.py` imports `query_offense_inde
 `_lexical_candidates`/`_hybrid_score` functions directly in-process (no subprocess) so it can precompute
 each case's candidates once and reuse them across its whole `vector_k`/`bm25_k`/`lexical_weight` grid
 without recomputing embeddings per config.
+
+### Stage 0 (`build_offense_corpus.py`, `build_offense_corpus_linux.py`)
+
+`build_offense_corpus.py` walks the raw STIX bundle via `mitreattack.stix20.MitreAttackData` and emits
+`technique_overview`/`technique_description`/`procedure_example` (or `procedure_example_stub` when MITRE
+supplies no relationship description) chunks per active (non-revoked/non-deprecated) technique.
+`build_offense_corpus()` takes an optional `platform` parameter (default `None`, never passed by this
+script's own CLI, so its default behavior is unchanged — verified byte-for-byte identical, modulo the
+timestamp and the new `platform_filter` metadata key, against the pre-existing corpus). When `platform` is
+set, two filters apply: an **inclusive** membership test on the technique itself (`platform in
+x_mitre_platforms` — a technique tagged for several platforms is kept as long as the target one is among
+them), and a **permissive** filter on procedure examples — a procedure example is dropped only if its
+source object (malware/tool) carries an explicit platform list that excludes the target platform; a source
+with no platform field at all (true of nearly every `intrusion-set`/`campaign` object, since STIX doesn't
+track platform on threat actors or campaigns) is never excluded on that basis alone. Every chunk's metadata
+carries a `platform_filter` key (`null` when unfiltered) for provenance.
+
+**`build_offense_corpus_linux.py` is a route-changing file.** It's a thin wrapper that imports
+`build_offense_corpus()` and calls it with `platform="Linux"`, writing to its own output path rather than
+overwriting the default corpus. The project is pivoting to a Linux-only, Python-only scope, and the
+resulting pair — `data/processed/rag_offense_mitre_linux_chunks.jsonl` (355/697 active techniques kept,
+5,091/12,495 procedure examples kept) plus `artifacts/offense_index_linux/` (built the same way as the
+default index, via `build_offense_index.py --corpus ... --outdir artifacts/offense_index_linux`) — is meant
+to become the pipeline's baseline as development continues, not a one-off experiment run alongside the
+original. As of now it is wired nowhere: every default below (`query_offense_index.py`,
+`generate_offense_rag.py`, both eval scripts) still points at the original `artifacts/offense_index`; using
+the Linux-only set requires `--index-dir artifacts/offense_index_linux` explicitly.
 
 ### Retrieval (`query_offense_index.py`)
 
@@ -196,6 +245,19 @@ credential-harvesting example caused generated plans to anchor on a near-identic
 the query; the example now also links two tasks to demonstrate the `provides`/`consumes` contract
 concretely.
 
+The system prompt now also states a DAG "may have as few as one node" and that splitting a capability
+simple enough for one file is "a planning error, not thoroughness" — a direct response to the over-
+decomposition this addition targets (it also drops the word "modular" from the prior "coherent, modular,
+executable DAG" framing for the same reason). The `## 4b. DATA MODEL & COHESION PRINCIPLES` prompt section
+was extended with a new rule **0**, applied *before* the existing 5 layering rules (co-locate return types,
+infrastructure layering, minimize upward coupling, group related symbols, symbol naming): "DECIDE WHETHER
+TO DECOMPOSE AT ALL." It defaults to one task per plan, splitting only when at least one holds: (a) two or
+more genuinely independent, separately-reusable components exist; (b) the combined implementation would
+clearly exceed ~150-200 lines of real logic; or (c) the Stage 1 techniques describe genuinely separate
+attack stages, not just separate facets of one mechanism. None of rules 1-5 are themselves a license to
+create more tasks — they describe *how* to layer once multiple tasks are already warranted, not a reason
+to warrant them.
+
 Evidence retrieval (`ContextBuilder.fetch_attack_evidence`) is not a flat per-technique slice: canonical
 `technique_description`/`technique_overview` chunks are always included, while procedure-example chunks are
 embedded and ranked by cosine similarity against the specific Stage 1 sub-query/part that originally
@@ -212,19 +274,40 @@ chunk-embedding index isn't available.
 ### Stage 2.5 (`plan_enhancing.py`, optional)
 
 Not part of the core pipeline and not called by `mvp-v1.py` — a manual step that takes a finalized Stage 2
-plan (`data/plans/human_outs/PLAN_*.json`) and makes a single batch LLM call (same dual-backend pattern as
-Stage 2: LM Studio primary, Gemini fallback) to attach a 5-key `scenario_context` object to every task —
-`narrative_role`, `upstream_assumptions`, `downstream_contract`, `consistency_notes`, `non_goals` —
-describing how that task fits into the broader attack chain. The response is validated
-(`_validate_context_response`) to cover exactly the plan's task IDs with all 5 non-empty string keys per
-task, retrying up to `--max-retries` with the rejection reason appended to the prompt
-(`_append_repair_note`). Fail-open: if every retry fails, the original plan is written through unmodified
-and the manifest records `status: "degraded"` instead of blocking the pipeline; a successful run records
-`status: "enhanced"`. Output goes to `data/plans/enhanced_outs/PLAN_<stem>.json` — a separate directory from
-Stage 2's `data/plans/human_outs/` — and every run appends one record to
-`data/plans/enhanced_outs/enhancement_manifest.jsonl`. `scenario_context` is read opportunistically by
-Stage 3 (`task.get("scenario_context")`, see below) and is not part of the required-task-keys contract
-Stage 3 enforces, so plans that never go through Stage 2.5 are unaffected.
+plan (`data/plans/human_outs/PLAN_*.json`) and attaches a per-task `scenario_context` object describing how
+that task fits into the broader attack chain, read opportunistically by Stage 3
+(`task.get("scenario_context")`, see below) — it is not part of the required-task-keys contract Stage 3
+enforces, so plans that skip Stage 2.5 are unaffected. Full detail in
+`docs/STAGE2_5_PLAN_ENHANCEMENT.md`.
+
+`scenario_context` has 5 possible keys, but they are no longer a fixed 5 for every task:
+`narrative_role`/`consistency_notes`/`non_goals` are unconditional, while `upstream_assumptions` and
+`downstream_contract` are included only when the task has a real dependency/dependent edge in the plan's
+DAG — a task with no dependencies has nothing upstream to assume, and a task nothing else in the plan
+depends on (**terminal**) already has its external contract fully defined by `source_query` +
+`implementation_details`, so restating that would manufacture a contract rather than report one.
+`_expected_context_keys(task, terminal_ids)` is the single function computing this per task_id, shared by
+every prompt builder and validator below so none can drift from another. `_dependents_map(plan)` computes
+each task's real dependents (the reverse of its own `dependencies`) once for the whole plan — handed to the
+model as precomputed `upstream_assumptions fact:`/`downstream_contract fact:` lines
+(`_format_dependency_facts`) so it expands a given fact into prose rather than re-deriving "who depends on
+me" itself, which is the specific computation that was failing in practice (see the doc and
+`docs/LLM_PROMPTS_REFERENCE.md`).
+
+Enhancement no longer lets one bad task cost the other N-1, and no longer fails open to an unmodified plan:
+(1) one batch call covering every task at once, retried up to `--max-retries` but **only** on a genuinely
+all-or-nothing structural failure (unparseable JSON, wrong task_id set — `_validate_batch_shape`); (2) each
+task's content is then validated independently (`_validate_single_task_context` — exactly the expected keys,
+each a non-empty string) and a task that fails is retried alone, with its own small prompt and retry budget
+(`_retry_single_task`/`_build_single_task_prompt`), never touching the other tasks; (3) a task that still
+fails gets its context computed deterministically from the plan's own dependency/provides structure instead
+of asked for again (`_deterministic_task_context`) — plainer than an LLM-authored version, but it cannot
+hallucinate a relationship the plan doesn't have. Status is `"enhanced"` (every task's context came from the
+model) or `"enhanced_partial"` (at least one task used the deterministic fallback — `dropped_tasks` in the
+manifest names which and why); `"degraded"` is now dead code kept only defensively, since the flow always
+produces a fully-populated plan. Output goes to `data/plans/enhanced_outs/PLAN_<stem>.json` — a separate
+directory from Stage 2's `data/plans/human_outs/` — and every run appends one record to
+`data/plans/enhanced_outs/enhancement_manifest.jsonl` (`dropped_tasks`/`dropped_task_count` included).
 
 ### Stage 3 (`generate_code.py`)
 
@@ -238,11 +321,21 @@ already-generated dependency tasks (function/method bodies replaced with `docstr
 `_compact_dependency_code`) so prompt size stays bounded as dependency chains grow. The model must reply
 with nothing but a single fenced ```python code block containing the complete file — there is no
 `FILENAME:` line in the contract; the output filename comes entirely from the plan's own
-`suggested_filename` (sanitized, then prefixed with the task ID). The reply then passes a three-step
+`suggested_filename` (sanitized, then prefixed with the task ID). The reply then passes a four-step
 accept gate, each step retried up to `--max-attempts` on failure: (1) `_parse_response` — a fenced
 ```python block that is non-empty and `ast.parse`s; (2) `_inject_dependency_imports` — a deterministic
 rewrite of the sibling-import lines (see below); (3) `_validate_contract` — the provides/consumes
-contract backstop. Resumable: skips tasks already `"generated"` in `manifest.jsonl` whose output file
+contract backstop; (4) `_check_undeclared_names` — a scope-aware undefined-name check
+(`pipeline_ast.find_undeclared_names`, via Python's `symtable` module) catching a NameError class none of
+the first three steps can see: a name read inside one function/class body that is never imported, never
+bound at module level, and isn't a builtin — e.g. a name assigned in one method and read in a sibling
+method, or a stdlib module used but never imported. `find_undeclared_names` also returns a second value,
+`unverifiable` (true when the file has a module-scope `from X import *`, whose brought-in names aren't
+knowable statically), but `_check_undeclared_names` discards it (bound to `_unverifiable`, never read) —
+despite its own inline comment saying this case is "skipped," the check still runs unconditionally and can
+reject a file for a false-positive "undeclared" name that is actually supplied by the star import (verified
+empirically: `from os.path import *` plus a function calling `join(...)` triggers exactly this). Resumable:
+skips tasks already `"generated"` in `manifest.jsonl` whose output file
 still exists, reusing that file as dependency context. Every attempt (success or failure) is appended to
 `data/code_scripts/manifest.jsonl` — an append-only audit trail, never overwritten. **Generated files can
 `import` sibling generated modules by filename** — renaming a file under `data/code_scripts/` requires
@@ -283,15 +376,24 @@ classification over **every** import site in the file (not just module scope —
 a function still needs the package installed), splitting imports into stdlib / sibling / third-party,
 resolving third-party ones with `importlib.util.find_spec` and sibling ones against the actual `*.py`
 files present (`missing_sibling`, `non_portable_import` warning for a repo-root-anchored path,
-`relative_import` fail); and L3b, which confirms a sibling `from X import a, b` actually finds `a`/`b` as
-real module attributes of `X` (checking only top-level `ImportFrom` statements). When a `--plan` is given
+`relative_import` fail); L3b, which confirms a sibling `from X import a, b` actually finds `a`/`b` as
+real module attributes of `X` (checking only top-level `ImportFrom` statements); and L4, the same scope-
+aware undeclared-name check Stage 3 now runs at generation time (`pipeline_ast.find_undeclared_names`) —
+one `fail` finding per name read inside a function/class body that is never imported, defined at module
+level, or a builtin, plus a separate `warn` finding (`unverifiable_names`) when the file has a module-scope
+`from ... import *`. That `warn` is informational only, not a softener: `find_undeclared_names` does not
+suppress the `undeclared_name` `fail` findings it already produced for that file, so a name genuinely
+supplied by the star import but read only inside a function is misclassified as undeclared and still fails
+the file — verified empirically (`from os.path import *` + a function calling `join(...)` triggers exactly
+this). When a `--plan` is given
 and L1 passed, it then re-applies Stage 3's own `_validate_contract` to whatever is on disk (reusing that
 exact function so the two never drift). Each file gets a `pass`/`warn`/`fail` verdict; one record per file
 is appended to `validation_manifest.jsonl` in the run dir, and the process exits non-zero if any file
 failed (so it doubles as a gate). The contract portion of this is **deliberately** redundant with Stage 3's
 generation-time check for a pristine `"generated"` file (same bytes, same function, same verdict) — kept on
-purpose, not an oversight to optimize away: it is a microsecond AST pass (the other four checks are *not*
-redundant even on a clean run — a per-file generator can't see cross-file or environment facts), and it
+purpose, not an oversight to optimize away: it is a microsecond AST pass (the other five checks — L1, L2,
+L3, L3b, and now L4 — are *not* redundant even on a clean run — a per-file generator can't see cross-file
+or environment facts), and it
 keeps the gate correct for the inputs it actually exists to cover (hand-edited, untracked, or older-run
 files). See `docs/STAGE4_A_STATIC_VALIDATION.md` ("On deliberately re-running the contract check").
 
@@ -334,6 +436,23 @@ recognizes the three sibling-import forms seen in this corpus (bare stem, repo-r
 explicit relative import) against the stems that actually exist in the run, and
 `collect_optional_dependency_fallback_names` recognizes the `try: import X / except ImportError: def X()`
 idiom so a name legitimately both imported and defined there isn't flagged as a collision.
+
+`find_undeclared_names(source, filename="<generated>")` is the newest addition: an execution-free undefined-
+name check built on Python's `symtable` module (not `ast` alone) — the first primitive here that needs scope
+resolution Python itself already computes, rather than a custom module-scope walk. It builds the module-level
+`symtable.symtable(...)` table, walks every descendant scope (functions, classes, nested functions)
+collecting any symbol that is `is_referenced()` and `is_global()` (i.e. read as a global from inside that
+scope, not a local), and flags it unless the name is bound at module level (assigned or imported — from
+`symtable`'s own per-symbol flags, not `collect_module_level_imports`), declared `global` and assigned
+inside some function (a real runtime module binding), a Python implicit module name
+(`__file__`/`__cached__`/`__builtins__`/`__class__`), or a `builtins` attribute. Returns
+`(findings, unverifiable)`: `findings` is a sorted list of `(def_lineno, scope_label, name)`; `unverifiable`
+is true when the module has a module-scope `from X import *` — `symtable` has no symbol entry for names a
+star-import brings in, so in that case `findings` can contain false positives for names the star import
+actually supplies (confirmed empirically: a function calling `join(...)` after `from os.path import *` is
+flagged). Neither of this function's two callers — Stage 3's `generate_code._check_undeclared_names` or
+Stage 4a's L4 check in `validate_scripts.py` — uses `unverifiable` to suppress those findings; see each
+stage's own section above for exactly what each does with it instead.
 
 ### `hosted_embeddings.py`
 

@@ -52,6 +52,37 @@ task regardless of the query. The example now shows two linked tasks specificall
 symbol `TASK_001` provides, while a second provided symbol is left unconsumed to show that's legal (only
 `consumes` requires a provider; the reverse isn't required).
 
+## Decomposition default (rule 0)
+
+The fixed system prompt states that a DAG "may have as few as one node," that decomposing into multiple
+tasks is warranted "only when the capability genuinely has multiple independent components, never by
+default," and that splitting a capability simple enough for a single file "is a planning error, not
+thoroughness." This replaced the prior system prompt's "coherent, **modular**, executable DAG" framing —
+the word "modular" was dropped, since over-decomposition (not under-decomposition) is the failure mode
+this addition targets.
+
+The `## 4b. DATA MODEL & COHESION PRINCIPLES` section of the user prompt gained a new rule, numbered **0**
+and listed *before* the pre-existing 5 layering rules (co-locate return types with functions,
+infrastructure layering, minimize upward coupling, group related symbols, symbol naming & discovery):
+"DECIDE WHETHER TO DECOMPOSE AT ALL." It instructs the model to default to exactly one task per plan, and
+to split into multiple tasks only when at least one of three conditions holds:
+
+1. Two or more genuinely independent components exist that could each be reused or replaced on their own
+   (e.g. a protocol implementation reused by several different callers).
+2. The combined implementation would clearly exceed roughly 150-200 lines of real logic, such that one
+   file would be hard to read or maintain.
+3. The techniques listed in section 3 of the prompt (the required top techniques) describe genuinely
+   separate attack stages, not just separate facets of one mechanism — the prompt's own example
+   contrasts "establish persistence" and "exfiltrate data" (two stages) against "open a socket" and "read
+   from that socket" (one mechanism, not two).
+
+If none of the three hold, the prompt instructs the model to output exactly one task implementing the
+whole capability directly — explicitly calling out that a single dataclass or helper function used by only
+one other function belongs inline in that function's own task, not split out into its own task merely
+because it has a name. Rules 1-5 (the pre-existing layering principles) are reframed as describing *how* to
+layer once multiple tasks are already warranted, not themselves a license to create more tasks than the
+capability needs.
+
 ## Planning Flow
 
 1. Load the Stage 1 result and `stage2_constraints.json`.
