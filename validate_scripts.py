@@ -16,6 +16,7 @@ from pathlib import Path
 from pipeline_ast import (
     collect_module_level_defs,
     collect_module_level_imports,
+    find_undeclared_names,
     iter_all_import_statements,
     sibling_stem_from_import,
 )
@@ -97,7 +98,8 @@ def _check_file(
     parsed_cache: dict[str, ast.Module],
     spec_cache: dict[str, bool],
 ) -> dict:
-    # L1 (compile) -> L2/L3 (import classification + resolution) -> L3b (sibling symbol existence).
+    # L1 (compile) -> L2/L3 (import classification + resolution) -> L3b (sibling symbol existence)
+    # -> L4 (undeclared names inside function/class bodies).
     # Returns {"verdict": "pass"|"warn"|"fail", "findings": [...], "missing_dependencies": [...]}.
     path: Path = candidate["path"]
     findings: list[dict] = []
@@ -197,6 +199,21 @@ def _check_file(
                     f"`{alias.name}` is imported from `{stem}`, but `{stem}.py` defines no such name "
                     "— ImportError at runtime",
                 ))
+
+    # L4: undefined names — a function/class body reads a name that is never imported, defined at
+    # module level, or a builtin. Import checks above can't see this; it only fails at call time.
+    undeclared, unverifiable = find_undeclared_names(source, str(path))
+    for def_lineno, scope_label, name in undeclared:
+        findings.append(_finding(
+            "fail", "undeclared_name",
+            f"`{name}` is read inside {scope_label} (defined at line {def_lineno}) but is never imported "
+            "or defined at module level — NameError when that code runs",
+        ))
+    if unverifiable:
+        findings.append(_finding(
+            "warn", "unverifiable_names",
+            "uses `from ... import *` at module level, so undefined-name checking can't be fully verified",
+        ))
 
     # Dedup (e.g. the same missing sibling referenced by two separate import lines).
     findings = list({f["message"]: f for f in findings}.values())

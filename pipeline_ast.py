@@ -6,11 +6,16 @@ independently-maintained (and potentially drifting) copies.
 """
 
 import ast
+import builtins
+import symtable
 from typing import Iterator
 
 # A name bound here starts a new scope; module-scope collectors never look inside one, since names
 # bound in there don't become attributes of the module itself.
 _SCOPE_BOUNDARY = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+
+# Names that exist at runtime without any import or assignment in the source file.
+_IMPLICIT_MODULE_NAMES = frozenset({"__file__", "__cached__", "__builtins__", "__class__"})
 
 
 def _module_scope_statements(tree: ast.Module) -> list[ast.stmt]:
@@ -161,3 +166,43 @@ def sibling_stem_from_import(module: str | None, level: int, candidate_stems: se
         return None
     last_segment = module.rsplit(".", 1)[-1]
     return last_segment if last_segment in candidate_stems else None
+
+
+def find_undeclared_names(source: str, filename: str = "<generated>") -> tuple[list[tuple[int, str, str]], bool]:
+    """Scope-aware undefined-name check via symtable (execution-free, nothing is imported or run).
+    Returns ([(def_lineno, scope_label, name), ...], unverifiable) where each finding is a name that a
+    function or class body reads as a global, but that is neither bound at module level, nor declared
+    `global` and assigned inside some function, nor a builtin. This is the NameError-at-call-time class
+    that import-only checks can't see, e.g. a name bound in one method and read in a sibling method.
+    `unverifiable` is True when the module has a `from X import *`, since the names it brings in can't be
+    known statically; callers should then warn rather than treat the file as clean."""
+    tree = ast.parse(source)
+    _, has_star = collect_module_level_imports(tree)
+
+    top = symtable.symtable(source, filename, "exec")
+    module_names = {s.get_name() for s in top.get_symbols() if s.is_assigned() or s.is_imported()}
+
+    all_tables: list[symtable.SymbolTable] = []
+    stack = list(top.get_children())
+    while stack:
+        table = stack.pop()
+        all_tables.append(table)
+        stack.extend(table.get_children())
+
+    # `global X` + assignment inside a function creates a real module-level binding at runtime.
+    for table in all_tables:
+        for sym in table.get_symbols():
+            if sym.is_declared_global() and sym.is_assigned():
+                module_names.add(sym.get_name())
+
+    findings: set[tuple[int, str, str]] = set()
+    for table in all_tables:
+        scope_label = f"{table.get_type()} `{table.get_name()}`"
+        for sym in table.get_symbols():
+            name = sym.get_name()
+            if not sym.is_referenced() or not sym.is_global():
+                continue
+            if name in module_names or name in _IMPLICIT_MODULE_NAMES or hasattr(builtins, name):
+                continue
+            findings.add((table.get_lineno(), scope_label, name))
+    return sorted(findings), has_star

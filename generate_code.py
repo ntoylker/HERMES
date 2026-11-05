@@ -22,6 +22,7 @@ from pipeline_ast import (
     collect_module_level_imports,
     collect_optional_dependency_fallback_names,
     collect_referenced_names,
+    find_undeclared_names,
     sibling_stem_from_import,
 )
 
@@ -509,6 +510,27 @@ def _validate_contract(code: str, task: dict, tasks_by_id: dict[str, dict], dep_
         )
 
 
+def _check_undeclared_names(code: str) -> None:
+    # Fourth gate step: a function/class body may only read names that are imported, defined at module
+    # level, or builtins. Import/contract checks don't see this, so a name bound in one method and read
+    # in another (or a stdlib module used but never imported) would otherwise pass and fail only at runtime.
+    # Skipped when the file has `from X import *` (names unknowable statically); Stage 4a warns for that case.
+    try:
+        undeclared, _unverifiable = find_undeclared_names(code)
+    except SyntaxError as exc:
+        # ast.parse accepts a few things the compiler rejects (e.g. `return` outside a function);
+        # treat that as an ordinary rejected attempt rather than letting it abort the whole run.
+        raise _ResponseRejected(f"generated code does not compile: {exc.msg} (line {exc.lineno})", code=code)
+    if undeclared:
+        details = "; ".join(f"`{name}` read in {scope} (defined at line {lineno})" for lineno, scope, name in undeclared)
+        raise _ResponseRejected(
+            "generated code reads names that are never imported or defined at module level "
+            "(NameError at runtime): " + details + " — import each module at module level, or define the name "
+            "in the same scope where it is used",
+            code=code,
+        )
+
+
 def _generate_task(
     *,
     task: dict,
@@ -544,6 +566,7 @@ def _generate_task(
             dep_stems = _dependency_module_stems(task, generated)
             code = _inject_dependency_imports(code, task, tasks_by_id, dep_stems)
             _validate_contract(code, task, tasks_by_id, dep_stems)
+            _check_undeclared_names(code)
             return code, attempt, None, last_diagnostics, None
         except _ResponseRejected as exc:
             last_error = str(exc)
