@@ -260,18 +260,26 @@ def _build_task_prompt(task: dict, generated: dict[str, dict]) -> str:
                 "BEFORE any code that uses those symbols. Missing imports will cause runtime NameError."
             )
 
-    # Add cross-task narrative context from Stage 2.5 enhancement (if present).
+    # Add cross-task narrative context from Stage 2.5 enhancement (if present). Stage 2.5 only
+    # populates upstream_assumptions/downstream_contract when the task has a real dependency/
+    # dependent (see plan_enhancing.py's _expected_context_keys) -- a key missing here means
+    # there was genuinely nothing to report, not a gap to fill with an empty bullet.
     scenario = task.get("scenario_context")
     if scenario:
-        lines += [
-            "",
-            "Context within the attack chain (from plan enhancement):",
-            f"  - Narrative role: {scenario.get('narrative_role', '')}",
-            f"  - Upstream assumptions: {scenario.get('upstream_assumptions', '')}",
-            f"  - Downstream contract: {scenario.get('downstream_contract', '')}",
-            f"  - Consistency notes: {scenario.get('consistency_notes', '')}",
-            f"  - Out of scope: {scenario.get('non_goals', '')}",
+        label_by_key = [
+            ("narrative_role", "Narrative role"),
+            ("upstream_assumptions", "Upstream assumptions"),
+            ("downstream_contract", "Downstream contract"),
+            ("consistency_notes", "Consistency notes"),
+            ("non_goals", "Out of scope"),
         ]
+        context_lines = [
+            f"  - {label}: {scenario[key]}"
+            for key, label in label_by_key
+            if scenario.get(key)
+        ]
+        if context_lines:
+            lines += ["", "Context within the attack chain (from plan enhancement):", *context_lines]
 
     hints = task.get("rag_retrieval_hints") or []
     if hints:
