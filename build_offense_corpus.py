@@ -51,7 +51,18 @@ def _safe_get_type(stix_obj) -> str | None:
     return stix_obj.get("type")
 
 
-def build_offense_corpus(input_path: str, output_path: str) -> None:
+def _platform_excludes(source_platforms: list[str] | None, platform: str) -> bool:
+    """Permissive source-platform rule for procedure examples: drop only when the
+    source object (malware/tool/group/campaign) carries an explicit platform list
+    that does NOT include `platform`. A missing/empty list (common for intrusion-set
+    and campaign objects, which don't carry x_mitre_platforms at all) is never
+    treated as exclusion -- there's nothing to disqualify it on."""
+    if not source_platforms:
+        return False
+    return platform not in source_platforms
+
+
+def build_offense_corpus(input_path: str, output_path: str, platform: str | None = None) -> None:
     print(f"Loading {input_path} (this might take a minute)...")
     mitre_data = MitreAttackData(input_path)
 
@@ -61,6 +72,8 @@ def build_offense_corpus(input_path: str, output_path: str) -> None:
 
     count_chunks = 0
     count_proc = 0
+    count_proc_dropped = 0
+    count_techniques_skipped = 0
 
     with open(output_path, "w", encoding="utf-8") as f:
         for technique in techniques:
@@ -73,6 +86,12 @@ def build_offense_corpus(input_path: str, output_path: str) -> None:
 
             platforms = technique.get("x_mitre_platforms") or []
             domains = technique.get("x_mitre_domains") or []
+
+            # Platform filter (e.g. "Linux"): inclusive membership test -- a technique
+            # tagged for several platforms is kept as long as the target one is among them.
+            if platform and platform not in platforms:
+                count_techniques_skipped += 1
+                continue
 
             tactics = mitre_data.get_tactics_by_technique(technique.id)
             tactic_names = [t.name for t in tactics] if tactics else []
@@ -100,6 +119,7 @@ def build_offense_corpus(input_path: str, output_path: str) -> None:
                 "parent_mitre_id": parent_attack_id,
                 "parent_name": parent_name,
                 "generated_at": generated_at,
+                "platform_filter": platform,
             }
 
             # Chunk: short overview (first paragraph)
@@ -163,6 +183,16 @@ def build_offense_corpus(input_path: str, output_path: str) -> None:
                 source_name = source_name or source_ref
                 source_type = source_type or "unknown"
 
+                # Permissive source-platform filter: drop only if the source object
+                # is explicitly tagged for other platforms and NOT the target one.
+                # Groups/campaigns usually carry no platform field at all and are
+                # never excluded on that basis alone.
+                if platform:
+                    source_platforms = source_obj.get("x_mitre_platforms") if source_obj else None
+                    if _platform_excludes(source_platforms, platform):
+                        count_proc_dropped += 1
+                        continue
+
                 # Even when MITRE doesn't provide a description, keep a compact stub
                 if _is_blank(rel_desc):
                     rel_text = f"Observed usage: {source_name} used Technique {mitre_id}: {name}."
@@ -193,6 +223,11 @@ def build_offense_corpus(input_path: str, output_path: str) -> None:
                 count_proc += 1
 
     print(f"Wrote {count_chunks} chunks to {output_path} ({count_proc} procedure-example chunks).")
+    if platform:
+        print(
+            f"Platform filter '{platform}': {count_techniques_skipped} techniques skipped, "
+            f"{count_proc_dropped} procedure examples dropped (source tagged for other platforms, not '{platform}')."
+        )
 
 
 def main() -> None:

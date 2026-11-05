@@ -1,0 +1,12 @@
+{
+  "created_at": "2026-11-04T18:48:53.294881+00:00",
+  "corpus": "data\\processed\\rag_offense_mitre_linux_chunks.jsonl",
+  "count": 5801,
+  "embeddings": {
+    "provider": "google_ai_studio",
+    "model": "gemini-embedding-2",
+    "dims": 3072,
+    "file": "embeddings.npy",
+    "normalized": true
+  }
+}
