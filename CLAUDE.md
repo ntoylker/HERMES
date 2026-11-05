@@ -9,8 +9,11 @@ given structured adversary knowledge via RAG. The intended design has 4 stages, 
 implemented and **Stage 4 (sandboxed execution/validation) is now partially built**: a static pre-flight
 validator (**Stage 4a**, `validate_scripts.py`) and a disposable network-isolated container import gate
 (**Tier 1**, `run_tier1_sandbox.py` + `tier1_runner.py` + `Dockerfile.tier1`) exist as standalone tools
-run against a finished Stage 3 run directory. They are **not yet wired into the pipeline chain** (neither
-`mvp-v1.py` nor anything else calls them automatically — you invoke them by hand). The heavier end of
+run against a finished Stage 3 run directory. Each remains invokable by hand against any run directory, and
+`mvp-v1.py` (Stage 1-3 only) still does not call them — but `mvp-v2.py`, added in the same commit that
+built Stage 4a/Tier 1, **does** wire them in automatically: it runs `mvp-v1.py` and then chains straight
+into `validate_scripts.py` and `run_tier1_sandbox.py` on that run's output, including a Docker-
+daemon/image preflight. See `mvp-v2.py` under Commands/Architecture below. The heavier end of
 Stage 4 — a full behavioral sandbox (Cuckoo/CAPE) and a richer per-task-type/self-test oracle — still does
 not exist, and neither does the second RAG over malware-code samples: the current Stage 3 code generation
 is task-conditioned only, not malware-sample-grounded.
@@ -84,6 +87,10 @@ python run_tier1_sandbox.py data/code_scripts/<run-dir> --plan data/plans/human_
 # (Stage 2.5 and Stage 4 are not part of this chain)
 python mvp-v1.py path/to/query.txt
 
+# One-shot driver v2: runs mvp-v1.py (Stage 1 -> 2 -> 3), then automatically continues into Stage 4a
+# and Tier 1 on that run's output (Stage 2.5 is still not part of this chain). Requires Docker.
+python mvp-v2.py path/to/query.txt
+
 # Evaluation
 python eval_offense_retrieval.py --cases data/eval/eval_cases.jsonl --index-dir artifacts/offense_index
 python eval_offense_generation.py --cases data/eval/eval_cases.jsonl --index-dir artifacts/offense_index
@@ -116,6 +123,19 @@ python sweep_offense_retrieval_fast.py   # baseline single-config run by default
   every stage runs with its hardcoded defaults, and the whole run aborts on the first stage that raises.
   Expect this file to change shape or be deleted as the pipeline matures — treat it as a convenience
   integration check, not a stable entry point to build on.
+- `mvp-v2.py` wraps `mvp-v1.py` and extends it through Stage 4 (Stage 2.5 is still skipped). It runs
+  `mvp-v1.py path/to/query.txt` as a subprocess with **live, uncaptured** output (unlike `mvp-v1.py`'s own
+  internal Stage 1 call, which it captures to read the printed output path) and aborts without continuing
+  to Stage 4 if that returns non-zero. It identifies *that run's* Stage 1 output file by snapshotting
+  `data/human_outs/*.json` before and after and taking the set difference (falling back to newest-by-mtime
+  if more than one new file appears) — deliberately not by parsing `mvp-v1.py`'s interleaved stdout, which
+  live-streaming makes unreliable to scrape. It then derives the Stage 2 plan path the same deterministic
+  way `mvp-v1.py` does, and requires both that plan file and `data/code_scripts/manifest.jsonl` to exist
+  before continuing. Docker prerequisites are checked *before* Stage 4a, not after: `_require_docker()`
+  exits immediately if the `docker` CLI is missing or the daemon doesn't respond, and `_ensure_image()`
+  builds `hermes-tier1-base:latest` from `Dockerfile.tier1` on first use if `docker image inspect` doesn't
+  find it already. Stage 4a and Tier 1 both run regardless of each other's outcome (Tier 1 always runs,
+  by design, even if Stage 4a already failed); the process exits non-zero if either reported failure.
 - `<run-dir>` for Stage 4a / Tier 1 is a Stage 3 output directory — the dir that holds the generated
   `*.py` files plus `manifest.jsonl` (e.g. `data/code_scripts/stage3_<name>`). Stage 3's default
   `--output-dir` is `data/code_scripts` itself, but in practice each run is pointed at its own
@@ -134,11 +154,13 @@ python sweep_offense_retrieval_fast.py   # baseline single-config run by default
 ## Architecture
 
 Four scripts form the core linear pipeline; everything else either evaluates/tunes one of its stages,
-drives Stages 1-3 end-to-end as a smoke test (`mvp-v1.py`), or post-processes a finished Stage 3 run
-(the Stage 4a / Tier 1 validators). A fifth script, `plan_enhancing.py` (Stage 2.5), sits between Stage 2
-and Stage 3 but is optional and manual — `mvp-v1.py` does not call it. The Stage 4 validators
-(`validate_scripts.py`, `run_tier1_sandbox.py`) are likewise optional and manual, and share scope-aware AST
-primitives with Stage 3 via `pipeline_ast.py`.
+drives Stages 1-3 end-to-end as a smoke test (`mvp-v1.py`), post-processes a finished Stage 3 run
+(the Stage 4a / Tier 1 validators), or chains both of those together (`mvp-v2.py`, which runs `mvp-v1.py`
+and then automatically continues into the Stage 4a / Tier 1 validators — see Commands above). A fifth
+script, `plan_enhancing.py` (Stage 2.5), sits between Stage 2 and Stage 3 but is optional and manual —
+neither `mvp-v1.py` nor `mvp-v2.py` calls it. `validate_scripts.py` and `run_tier1_sandbox.py` remain
+optional and manual when invoked directly, but are no longer the *only* way to run them: `mvp-v2.py` is a
+second, automatic path into both. They share scope-aware AST primitives with Stage 3 via `pipeline_ast.py`.
 
 ```
 data/raw/enterprise-attack/enterprise-attack.json (STIX bundle)
