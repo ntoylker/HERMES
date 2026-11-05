@@ -397,7 +397,10 @@ class ContextBuilder:
         system_prompt = (
             "You are the Lead Systems Architect for the HERMES offensive security research pipeline.\n"
             "Your role in Stage 2 is to translate high-level MITRE ATT&CK techniques and attack phases into a "
-            "coherent, modular, executable Directed Acyclic Graph (DAG) of technical implementation tasks.\n"
+            "coherent, executable Directed Acyclic Graph (DAG) of technical implementation tasks.\n"
+            "A DAG may have as few as one node: decompose into multiple tasks only when the capability genuinely "
+            "has multiple independent components, never by default. Splitting a task that is simple enough to "
+            "implement correctly as a single file is a planning error, not thoroughness.\n"
             "These tasks will be passed to Stage 3 (code generation) for automated synthesis and sandbox testing.\n"
             "You must output ONLY valid, well-formed JSON conforming strictly to the requested schema, with no "
             "conversational preamble or markdown commentary outside JSON."
@@ -459,6 +462,22 @@ class ContextBuilder:
             "",
             "## 4b. DATA MODEL & COHESION PRINCIPLES",
             "Design tasks for semantic cohesion and proper layering, not just syntactic correctness:",
+            "",
+            "0. DECIDE WHETHER TO DECOMPOSE AT ALL (apply this BEFORE rules 1-5 below):",
+            "   Default to ONE task per plan. Only split into multiple tasks when at least one of these is true:",
+            "   - Two or more genuinely independent components exist that could each be reused or replaced on",
+            "     their own (e.g. a protocol implementation reused by several different callers).",
+            "   - The combined implementation would clearly exceed roughly 150-200 lines of real logic, such that",
+            "     one file would be hard to read or maintain.",
+            "   - The techniques listed in section 3 above describe genuinely separate attack stages, not just",
+            "     separate facets of one mechanism (e.g. 'establish persistence' and 'exfiltrate data' are two",
+            "     stages; 'open a socket' and 'read from that socket' are one mechanism, not two).",
+            "   If none of these hold, output exactly one task that implements the whole capability directly, "
+            "with no separate data-model or utility task. A single dataclass or helper function used by only "
+            "one other function belongs inline in that function's own task, not split out into its own task "
+            "merely because it has a name. Rules 1-5 below describe HOW to layer once you've already decided "
+            "multiple tasks are warranted — they are not themselves a reason to create more tasks than the "
+            "capability actually needs.",
             "",
             "1. CO-LOCATE RETURN TYPES WITH FUNCTIONS:",
             "   If a function returns a custom type (dataclass, class, NamedTuple), define that type in the SAME task",
