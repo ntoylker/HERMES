@@ -1,4 +1,4 @@
-Generate a reverse shell code, that 
-opens a shell in 0.0.0.0 interface and
- port 5522 that i can connect from the outside lan my terminal and
-  execute shell commands from my remote connection
+Generate a Linux reverse shell code, that
+connects back out to a hardcoded IP address constant for my machine (192.168.1.10) on
+port 5522, so i can get a shell on it from my terminal and 
+execute shell commands through that remote connection
