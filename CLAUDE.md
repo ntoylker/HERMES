@@ -488,6 +488,18 @@ Auto-detects provider from env vars (Google AI Studio -> Azure OpenAI -> OpenAI,
 
 ## Conventions
 
+- **Query-authoring rule (going forward)**: every query handed to Stage 1 (`generate_offense_rag.py`,
+  whether directly or via `mvp-v1.py`/`mvp-v2.py`) should be (1) Linux-only in scope, consistent with the
+  Stage 0 Linux/Python pivot above; (2) concrete about inputs/outputs (target IP/port, file paths, data
+  formats, etc.) rather than left generic; and (3) concrete about the threat-model specifics (target
+  host/port, OS, privilege level) the generated code will act on. This is an authoring convention, not
+  something machine-checked anywhere: there is no clarification step from Stage 1 through Stage 3, so
+  `source_query` is the pipeline's only source of these facts, and an underspecified query just produces
+  underspecified generated code with no later stage able to fill the gap. Pinning the threat model
+  concretely up front also sets Stage 4 up to test the result meaningfully — e.g. knowing a task is a
+  listener/connector with no real peer inside Tier 1's network-isolated container means its `timeout`
+  verdict (see Tier 1 below) is the expected, correct signal rather than an ambiguous hang. See
+  `query_test.txt`/`query_test_level2.txt` for examples following this convention.
 - Output pattern: Stage 1 always writes a fresh timestamped pretty `.json` (human-facing) + compact
   `.jsonl` (machine-facing) pair per run, even on failure. Stage 2 does not follow this pattern — it writes
   to `PLAN_<stage1-stem>`-named files instead of a fresh timestamp: the machine `.jsonl` is appended to on
