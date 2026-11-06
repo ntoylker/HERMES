@@ -9,7 +9,7 @@ RUN useradd --create-home --uid 1000 tier1
 
 # --- third-party packages for generated code, only ever added here when validate_scripts.py's
 # missing-dependency list says a real run actually needs one: ---
-# RUN pip install --no-cache-dir <package>==<version>
+RUN pip install --no-cache-dir cryptography
 
 COPY tier1_runner.py /task_runner/tier1_runner.py
 
