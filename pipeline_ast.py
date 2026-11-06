@@ -168,6 +168,18 @@ def sibling_stem_from_import(module: str | None, level: int, candidate_stems: se
     return last_segment if last_segment in candidate_stems else None
 
 
+def _is_main_guard_test(test: ast.expr) -> bool:
+    """Recognizes `__name__ == "__main__"`, either operand order -- the standard top-level guard
+    that runs only when a file is executed directly, never when it's imported as a sibling module
+    (which is how this pipeline's generated files reference each other)."""
+    if not isinstance(test, ast.Compare) or len(test.ops) != 1 or not isinstance(test.ops[0], ast.Eq):
+        return False
+    operands = (test.left, test.comparators[0])
+    names = {n.id for n in operands if isinstance(n, ast.Name)}
+    consts = {n.value for n in operands if isinstance(n, ast.Constant)}
+    return names == {"__name__"} and consts == {"__main__"}
+
+
 def find_undeclared_names(source: str, filename: str = "<generated>") -> tuple[list[tuple[int, str, str]], bool]:
     """Scope-aware undefined-name check via symtable (execution-free, nothing is imported or run).
     Returns ([(def_lineno, scope_label, name), ...], unverifiable) where each finding is a name that a
@@ -181,6 +193,22 @@ def find_undeclared_names(source: str, filename: str = "<generated>") -> tuple[l
 
     top = symtable.symtable(source, filename, "exec")
     module_names = {s.get_name() for s in top.get_symbols() if s.is_assigned() or s.is_imported()}
+
+    # symtable only sees lexical scope, not runtime control flow: a name bound inside a top-level
+    # `if __name__ == "__main__":` guard still reads as module-scope-bound even though that guard's
+    # body never executes when the file is imported as a sibling module -- exactly the path these
+    # generated files use to reference each other. Drop any name whose *only* module-level binding
+    # is inside such a guard (one bound both inside and outside it is still genuinely available).
+    guard_ifs = [n for n in tree.body if isinstance(n, ast.If) and _is_main_guard_test(n.test)]
+    if guard_ifs:
+        inside_stmts = [stmt for node in guard_ifs for stmt in node.body]
+        outside_stmts = [stmt for node in guard_ifs for stmt in node.orelse]
+        outside_stmts += [node for node in tree.body if node not in guard_ifs]
+        inside_mod = ast.Module(body=inside_stmts, type_ignores=[])
+        outside_mod = ast.Module(body=outside_stmts, type_ignores=[])
+        inside_bound = collect_module_level_defs(inside_mod) | set(collect_module_level_imports(inside_mod)[0])
+        outside_bound = collect_module_level_defs(outside_mod) | set(collect_module_level_imports(outside_mod)[0])
+        module_names -= inside_bound - outside_bound
 
     all_tables: list[symtable.SymbolTable] = []
     stack = list(top.get_children())
