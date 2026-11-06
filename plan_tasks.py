@@ -504,6 +504,14 @@ class ContextBuilder:
             "   Each symbol name in 'provides' should make sense in context: if you see 'ExecutionResult' in",
             "   a task's 'provides', it should be obvious what function(s) use it. Avoid orphaned types.",
             "",
+            "6. PRESERVE QUERY SPECIFICITY:",
+            "   If the source query hardcodes a specific value (target IP, directory path, command, hostname),",
+            "   the task's `implementation_details` should preserve that constraint by hardcoding it too.",
+            "   Do NOT parameterize away the query's specificity (e.g., replacing 'use hardcoded target",
+            "   192.168.1.100' with 'accept a target hostname as a parameter'). Abstract generality must not",
+            "   silently replace query constraints. If the query is concrete, tasks should be concrete. The",
+            "   task contract must match the source query's requirements, not reinterpret or generalize them.",
+            "",
             "## 5. TARGET JSON OUTPUT SCHEMA",
             "Return JSON adhering strictly to this schema. The concrete values below (filenames, symbol "
             "names, technique IDs, descriptions) are generic placeholders illustrating structure only, not "
