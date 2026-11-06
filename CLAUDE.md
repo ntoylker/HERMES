@@ -64,15 +64,20 @@ python build_offense_index.py --corpus data/processed/rag_offense_mitre_linux_ch
 python query_offense_index.py "abuse wmi to execute payload remotely" --index-dir artifacts/offense_index --top-techniques 10
 python generate_offense_rag.py "abuse wmi to execute payload remotely" --index-dir artifacts/offense_index
 
-# Stage 2: turn a Stage 1 output into a validated task plan
+# Stage 2: turn a Stage 1 output into a validated task plan (local LM Studio by default; --provider
+# gemini routes the planning call itself to Gemini instead of only using it as an on-failure fallback)
 python plan_tasks.py --stage1-input data/human_outs/<stage1-timestamp>.json
+python plan_tasks.py --stage1-input data/human_outs/<stage1-timestamp>.json --provider gemini --gemini-model gemini-3.1-pro-preview
 
 # Stage 2.5 (optional, manual — not called by mvp-v1.py): attach cross-task narrative context to a
 # Stage 2 plan; writes to data/plans/enhanced_outs/, separate from Stage 2's data/plans/human_outs/
+# (also supports --provider gemini --gemini-model gemini-3.1-pro-preview, same as Stage 2)
 python plan_enhancing.py data/plans/human_outs/PLAN_<stage1-stem>.json
 
-# Stage 3: generate per-task Python files from a Stage 2 (or Stage 2.5-enhanced) plan (local LM Studio)
+# Stage 3: generate per-task Python files from a Stage 2 (or Stage 2.5-enhanced) plan (local LM Studio by
+# default; --provider gemini redirects every generation call to Gemini instead, no mid-run fallback)
 python generate_code.py data/plans/human_outs/<stage2-timestamp>.json --timeout 1200
+python generate_code.py data/plans/human_outs/<stage2-timestamp>.json --provider gemini --gemini-model gemini-3.1-pro-preview
 
 # Stage 4a (standalone, manual — not called by mvp-v1.py): static pre-flight validation of a finished
 # Stage 3 run directory. No code is executed. --plan enables the provides/consumes contract check.
@@ -108,12 +113,30 @@ python sweep_offense_retrieval_fast.py   # baseline single-config run by default
   them cleanly.
 - `--force` on `generate_code.py` ignores the manifest and regenerates every task from scratch; without it,
   already-generated tasks (per `manifest.jsonl`) are skipped and reused as dependency context.
-- Stage 3 requires a local LM Studio server (OpenAI-compatible API) at `http://localhost:1234/v1` with a
-  Qwen3.8-9B-heretic-uncensored-NVFP4 model loaded, served as `qwen3.8-9b-heretic-uncensored-nvfp4` — LM
-  Studio normalizes the HuggingFace repo name (`Noobito45/Qwen3.8-9B-heretic-uncensored-NVFP4-GGUF`) into
-  that shorter ID; verify via `GET /v1/models` before trusting a repo name as the `--model` value. LM
-  Studio's context window is fixed at model-load time (currently 43000 tokens, sized to fit an 8GB-VRAM
-  GPU-only load), not a per-request option — there is no `--num-ctx`-equivalent flag.
+- Stage 3's default backend (`--provider lmstudio`, the default) requires a local LM Studio server
+  (OpenAI-compatible API) at `http://localhost:1234/v1` with a Qwen3.8-9B-heretic-uncensored-NVFP4 model
+  loaded, served as `qwen3.8-9b-heretic-uncensored-nvfp4` — LM Studio normalizes the HuggingFace repo name
+  (`Noobito45/Qwen3.8-9B-heretic-uncensored-NVFP4-GGUF`) into that shorter ID; verify via `GET /v1/models`
+  before trusting a repo name as the `--model` value. LM Studio's context window is fixed at model-load
+  time (currently 43000 tokens, sized to fit an 8GB-VRAM GPU-only load), not a per-request option — there
+  is no `--num-ctx`-equivalent flag. `--provider gemini` bypasses LM Studio entirely and requires
+  `GEMINI_API_KEY` instead (checked up front; the run aborts before touching any task if it's unset).
+- **Gemini model selection and visibility, all three now CLI-controlled.** `plan_tasks.py` (Stage 2),
+  `plan_enhancing.py` (Stage 2.5), and `generate_code.py` (Stage 3) each take `--provider {lmstudio,gemini}`
+  (Stage 3 added this flag and its whole Gemini backend from scratch; Stage 2 and 2.5 already had the flag)
+  and `--gemini-model` (default `gemini-3.1-pro-preview` everywhere, replacing Stage 2's old
+  `gemini-2.5-pro` default and Stage 2.5's old `gemini-2.0-flash` default — Google deprecated
+  `gemini-2.5-pro` effective 2026-12-01, after which it silently routes to and bills as `gemini-3.8-flash`).
+  Stage 2.5's `--provider gemini` path was previously **non-functional**: `LLMProvider.__init__` took
+  `gemini_api_key` with no fallback and `main()` always passed it as `None`, and the module never called
+  `load_dotenv()`, so a Gemini call there always raised `GEMINI_API_KEY environment variable required`
+  regardless of the environment; both are now fixed (env-var fallback added, `load_dotenv()` added), so
+  `--provider gemini` actually works there now. All three scripts' `_call_gemini` now also print
+  `[GEMINI] model=... prompt_tokens=... output_tokens=... total_tokens=...` to stderr on every call, read
+  from the response's own `modelVersion`/`usageMetadata` fields (not just the model string that was
+  requested); Stage 3 additionally persists the real model actually used into each `manifest.jsonl`
+  record's `model` field (previously always `args.model`, i.e. the LM Studio value, even when nothing
+  Stage 3 did could route through Gemini at all).
 - `mvp-v1.py` is a **first-version, temporary smoke-test script** (the most recent step in this pipeline's
   progress), not a fourth pipeline stage: it chains the three real stages together via
   `subprocess.run(..., check=True)` — `generate_offense_rag.py <query>` -> captures Stage 1's printed
@@ -172,9 +195,11 @@ data/raw/enterprise-attack/enterprise-attack.json (STIX bundle)
                                    at either corpus via --corpus/--outdir)
   -> query_offense_index.py        (hybrid vector+BM25 retrieval, called by everything below)
   -> generate_offense_rag.py       STAGE 1: query decomposition + Gemini technique linking + citation validation
-  -> plan_tasks.py                 STAGE 2: LM Studio (Gemini-fallback) task planning + deterministic Python validation
+  -> plan_tasks.py                 STAGE 2: LM Studio (Gemini-fallback, or --provider gemini directly) task
+                                   planning + deterministic Python validation
   -> plan_enhancing.py             STAGE 2.5 (optional, manual): adds per-task narrative context; not called by mvp-v1.py
-  -> generate_code.py              STAGE 3: per-task Python file generation via local LM Studio
+  -> generate_code.py              STAGE 3: per-task Python file generation via local LM Studio (default)
+                                   or Gemini directly via --provider gemini
   -> validate_scripts.py           STAGE 4a (optional, manual): execution-free static validation of a Stage 3 run dir
   -> run_tier1_sandbox.py          TIER 1 (optional, manual): disposable network-isolated container import gate
                                    (in-container runner: tier1_runner.py; image: Dockerfile.tier1)
@@ -248,7 +273,8 @@ empty retrieval or Gemini failure.
 ### Stage 2 (`plan_tasks.py`)
 
 Takes a Stage 1 output and asks a dual-backend LLM (local LM Studio by default, falling back to Gemini on
-failure, or Gemini directly via `--provider gemini`) to decompose top ATT&CK techniques directly into
+failure, or Gemini directly via `--provider gemini`, model `--gemini-model` default `gemini-3.1-pro-preview`)
+to decompose top ATT&CK techniques directly into
 tasks — the model assigns each task's own final `TASK_NNN`-style `task_id`, `task_type`,
 `suggested_filename`, `technique_ids`, `dependencies`, `provides`/`consumes` symbol contract,
 `implementation_details`, and `rag_retrieval_hints`. The model's JSON is never trusted structurally — a
@@ -331,6 +357,18 @@ produces a fully-populated plan. Output goes to `data/plans/enhanced_outs/PLAN_<
 directory from Stage 2's `data/plans/human_outs/` — and every run appends one record to
 `data/plans/enhanced_outs/enhancement_manifest.jsonl` (`dropped_tasks`/`dropped_task_count` included).
 
+Reuses Stage 2's exact dual-backend `LLMProvider` pattern: `--provider {lmstudio,gemini}` (default
+`lmstudio`, falling back to Gemini on failure) and `--gemini-model` (default `gemini-3.1-pro-preview`,
+replacing the old `gemini-2.0-flash` default). Until now this backend was **non-functional**: the
+constructor's `gemini_api_key` parameter had no environment-variable fallback and `main()` always passed it
+as `None`, and the module never called `load_dotenv()` — so any attempt to reach Gemini here, whether via
+automatic fallback or `--provider gemini` directly, always raised `GEMINI_API_KEY environment variable
+required for Gemini fallback` regardless of what was actually in the environment. Both gaps are now fixed
+(the constructor falls back to `os.getenv("GEMINI_API_KEY")`, and `load_dotenv()` is called at import time,
+matching every other script's convention). `_call_gemini` also now prints
+`[GEMINI] model=... prompt_tokens=... output_tokens=... total_tokens=...` to stderr on every call, read
+from the response's own `modelVersion`/`usageMetadata`.
+
 ### Stage 3 (`generate_code.py`)
 
 Aborts unless the input plan's `tasks` array is non-empty and every task has all required keys (`task_id`,
@@ -362,6 +400,28 @@ still exists, reusing that file as dependency context. Every attempt (success or
 `data/code_scripts/manifest.jsonl` — an append-only audit trail, never overwritten. **Generated files can
 `import` sibling generated modules by filename** — renaming a file under `data/code_scripts/` requires
 grepping every other generated file for imports of the old name.
+
+**`--provider gemini` (new backend, no fallback-on-failure).** Previously Stage 3 could only call local LM
+Studio; it now also accepts `--provider {lmstudio,gemini}` (default `lmstudio`) and `--gemini-model`
+(default `gemini-3.1-pro-preview`). Unlike Stage 2/2.5's LM-Studio-primary-with-Gemini-fallback pattern,
+this is a straight redirect with no automatic switching mid-run: picking `gemini` sends every task's
+generation call to Gemini instead, for the whole run. `main()` checks `GEMINI_API_KEY` up front and exits
+before touching any task if `--provider gemini` is requested without it, rather than discovering the
+problem attempt-by-attempt. `_call_gemini` is a drop-in replacement for `_call_lmstudio` — same
+`(text, diagnostics)` return shape, same plain-text/fenced-```python-block request (no `responseMimeType`
+JSON mode, since that's a Stage 2/2.5-only convention their JSON-plan output needs and this stage's file-
+content output does not) — so the accept gate downstream (`_parse_response` through
+`_check_undeclared_names`) runs identically regardless of which backend answered. Error handling
+distinguishes failure scope the same way `_call_lmstudio` already did: a `ConnectionError` (Gemini
+unreachable) raises a plain `RuntimeError`, which escapes `_generate_task`'s per-attempt retry and aborts
+the whole run immediately, since an outage affects every remaining task identically; any other per-request
+problem (bad HTTP status, no candidates returned) raises `_GeminiCallError`, a `requests.RequestException`
+subclass, so it's retried per-attempt like an ordinary LM Studio `HTTPError` instead of aborting. Each
+`manifest.jsonl` record's `model` field now reflects whichever model actually ran (`args.gemini_model` or
+`args.model`), not always the LM Studio value regardless of provider as before. `_call_gemini` also prints
+`[GEMINI] model=... prompt_tokens=... output_tokens=... total_tokens=...` to stderr per call, same as
+Stages 2 and 2.5, and populates the manifest's `diagnostics` field from Gemini's own `usageMetadata` instead
+of LM Studio's OpenAI-compatible `usage` field.
 
 A Stage 2 plan is effectively one multi-file program sliced into tasks, stitched together by the
 `provides`/`consumes` symbol contract and the `dependencies` edges — but each file is generated by a small
@@ -475,6 +535,19 @@ actually supplies (confirmed empirically: a function calling `join(...)` after `
 flagged). Neither of this function's two callers — Stage 3's `generate_code._check_undeclared_names` or
 Stage 4a's L4 check in `validate_scripts.py` — uses `unverifiable` to suppress those findings; see each
 stage's own section above for exactly what each does with it instead.
+
+`find_undeclared_names` also special-cases a top-level `if __name__ == "__main__":` guard
+(`_is_main_guard_test`, recognizing either comparison operand order), since `symtable` reflects only
+lexical scope, not runtime control flow: a name imported or defined solely inside that guard still reads
+as module-scope-bound even though the guard body never executes when the file is imported as a sibling
+module — exactly the path this pipeline's generated files use to reference each other. Any name whose
+*only* module-level binding is inside such a guard is excluded from the "available" set before undeclared
+names are resolved (one bound both inside and outside the guard is still genuinely available, so it's
+kept). Without this, a function calling `os.path.exists(...)` while `os` is imported only under
+`if __name__ == "__main__":` passed Stage 4a with no finding, despite raising `NameError` the moment
+another generated file imports that module and calls the function — confirmed empirically, along with the
+negative case: this exclusion does not flag ordinary `self.attr` access (a naive "every attribute-access
+root must be module-level-bound" check would, incorrectly, on every class method).
 
 ### `hosted_embeddings.py`
 

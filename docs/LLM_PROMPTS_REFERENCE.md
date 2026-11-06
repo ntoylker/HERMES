@@ -18,7 +18,7 @@ shown as `{placeholder}` with a short note on what fills them in.
 | 1b — technique linking | `generate_offense_rag.py` | `_build_prompt` | Gemini (`gemini-2.5-pro` default, structured output via `responseSchema`) | Same prompt resent verbatim, up to `--max-retries` (default 3) |
 | 2 — task plan synthesis | `plan_tasks.py` | `ContextBuilder.build_prompts` | LM Studio primary, Gemini fallback | Feedback + previous draft appended to the *same* prompt, up to `--max-retries` |
 | 2.5 — scenario context (optional) | `plan_enhancing.py` | `_build_context_prompt` (batch) + `_build_single_task_prompt` (isolated per-task retry) | LM Studio primary, Gemini fallback | Batch retried up to `--max-retries`, but only on structural failure; a task whose *content* fails is retried alone (own `--max-retries` budget) via `_build_single_task_prompt`; still-failing tasks get a deterministically computed context instead — never fails open to an unmodified plan |
-| 3 — per-task code generation | `generate_code.py` | `_build_task_prompt` + `_append_repair_note` | LM Studio only (no Gemini fallback) | Rejection reason appended, up to `--max-attempts` |
+| 3 — per-task code generation | `generate_code.py` | `_build_task_prompt` + `_append_repair_note` | LM Studio (default) or Gemini directly via `--provider gemini` — a straight redirect, not an on-failure fallback like Stages 2/2.5 | Rejection reason appended, up to `--max-attempts` |
 
 ---
 
@@ -553,7 +553,10 @@ Ensure your response is valid JSON with EXACTLY the required keys listed above f
 ## Stage 3 — Per-Task Code Generation (`generate_code.py`)
 
 **Context.** `_build_task_prompt()`, called once per task in dependency order by the main generation
-loop. Local LM Studio only — unlike Stages 2 and 2.5, there's no Gemini fallback here. The prompt is
+loop. Local LM Studio by default; `--provider gemini` redirects every task's call to Gemini
+(`--gemini-model`, default `gemini-3.1-pro-preview`) instead for the whole run — unlike Stages 2 and 2.5,
+this is a straight backend choice, not an automatic on-failure fallback. The prompt text itself is
+identical either way; only which backend executes it changes. The prompt is
 built from the task's own plan fields plus AST-compacted interfaces of already-generated dependencies
 (`_compact_dependency_code`: real function/method bodies replaced with `docstring + ...`, so dependency
 chains don't blow up prompt size). On a rejected response (bad fence, contract violation, etc.), a

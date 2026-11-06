@@ -166,7 +166,7 @@ The `.json` file is the human-friendly view; the `.jsonl` file is the machine-fr
 
 ## 6) Build a Stage 2 task plan
 
-`plan_tasks.py` takes the Stage 1 pretty JSON output and asks an LLM (local LM Studio by default, falling back to Gemini on failure, or Gemini directly via `--provider gemini`) to produce a task plan, deterministically validated against `data/config/stage2_constraints.json`. It enriches the model prompt with technique-level ATT&CK chunk text from the SQLite index, but does not persist any chunk-level evidence reference into the resulting plan.
+`plan_tasks.py` takes the Stage 1 pretty JSON output and asks an LLM (local LM Studio by default, falling back to Gemini on failure, or Gemini directly via `--provider gemini`; `--gemini-model` defaults to `gemini-3.1-pro-preview`) to produce a task plan, deterministically validated against `data/config/stage2_constraints.json`. It enriches the model prompt with technique-level ATT&CK chunk text from the SQLite index, but does not persist any chunk-level evidence reference into the resulting plan.
 
 ```bash
 ./venv/bin/python plan_tasks.py --stage1-input data/human_outs/<stage1-timestamp>.json
@@ -181,10 +181,11 @@ Stage 1 `alternatives` are always included as optional context (there is no flag
 
 ## 7) Generate code from a plan
 
-`generate_code.py` sends each task in a Stage 2 plan to a local LM Studio model, one independent request per task, and writes the result as a Python file under `data/code_scripts/`.
+`generate_code.py` sends each task in a Stage 2 plan to a local LM Studio model (default) or, with `--provider gemini`, to the Gemini API instead (`--gemini-model`, default `gemini-3.1-pro-preview`; requires `GEMINI_API_KEY`) — one independent request per task either way — and writes the result as a Python file under `data/code_scripts/`.
 
 ```bash
 python generate_code.py data/plans/human_outs/<stage2-timestamp>.json
+python generate_code.py data/plans/human_outs/<stage2-timestamp>.json --provider gemini --gemini-model gemini-3.1-pro-preview
 ```
 
 See [STAGE3_CODE_GENERATION.md](STAGE3_CODE_GENERATION.md) for the prompt contract, retry/resume behavior, and output manifest format.

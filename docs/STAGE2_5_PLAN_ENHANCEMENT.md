@@ -121,7 +121,9 @@ Options:
 
 - `--provider {lmstudio,gemini}` — LLM backend; default `lmstudio` (falls back to Gemini on failure, same
   `LLMProvider` dual-backend pattern as Stage 2)
-- `--lmstudio-url`, `--lmstudio-model`, `--gemini-model` — backend endpoint/model overrides
+- `--lmstudio-url`, `--lmstudio-model` — LM Studio endpoint/model overrides
+- `--gemini-model` — model used for `--provider gemini` or the on-failure fallback; default
+  `gemini-3.1-pro-preview`
 - `--timeout` — per-request timeout in seconds; default `600` (Gemini calls are additionally capped at
   120s inside `LLMProvider._call_gemini`)
 - `--max-tokens` — max completion tokens; default `16384`
@@ -129,9 +131,17 @@ Options:
   task retry; default `3`
 - `--output-dir` — default `data/plans/enhanced_outs`
 
-`GEMINI_API_KEY` is read from the environment, not accepted as a CLI flag (`LLMProvider`'s constructor
-takes `gemini_api_key=None` from `main()` and relies on the fallback path to raise if it's actually needed
-and absent).
+`GEMINI_API_KEY` is read from the environment, not accepted as a CLI flag. **This path was previously
+broken and is now fixed.** `main()` always passed `gemini_api_key=None` to the `LLMProvider` constructor,
+and the constructor itself had no environment-variable fallback (unlike Stage 2's otherwise-identical
+`LLMProvider`) — so any Gemini call here, whether via automatic fallback or `--provider gemini` directly,
+unconditionally raised `GEMINI_API_KEY environment variable required for Gemini fallback`, regardless of
+what was actually set in the environment; the module also never called `load_dotenv()`, so even a key
+present in `.env` (as opposed to the real process environment) wouldn't have been picked up. The
+constructor now falls back to `os.getenv("GEMINI_API_KEY")` and the module calls `load_dotenv()` at import
+time, matching Stage 2's convention — `--provider gemini` and the on-failure fallback both actually work
+now. Every Gemini call also now prints `[GEMINI] model=... prompt_tokens=... output_tokens=...
+total_tokens=...` to stderr, read from the response's own `modelVersion`/`usageMetadata`.
 
 ## Output Contract
 

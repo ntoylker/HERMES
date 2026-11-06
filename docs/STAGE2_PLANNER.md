@@ -123,12 +123,19 @@ Omit `--stage1-input` to auto-select the latest Stage 1 output.
 
 Options:
 
-- `--provider {lmstudio,gemini}`: LLM backend; default `lmstudio` (falls back to Gemini on failure)
+- `--provider {lmstudio,gemini}`: LLM backend; default `lmstudio` (falls back to Gemini on failure);
+  `gemini` sends the planning call to Gemini directly instead
 - `--lmstudio-url`: LM Studio chat-completions URL; default `http://localhost:1234/v1/chat/completions`
 - `--lmstudio-model`: model name sent to LM Studio; default `local-model`
+- `--gemini-model`: model used for `--provider gemini` or the on-failure fallback; default
+  `gemini-3.1-pro-preview`
 - `--max-tokens`: max completion tokens; default `16384`
 - `--timeout`: per-request timeout in seconds; default `600` (Gemini calls are additionally capped at 120s)
 - `--max-retries`: self-repair attempts; default `3`
+
+Every Gemini call (fallback or direct) prints `[GEMINI] model=... prompt_tokens=... output_tokens=...
+total_tokens=...` to stderr, read from the response's own `modelVersion`/`usageMetadata` fields rather than
+just echoing back the model string that was requested.
 
 `--index-dir`, `--constraints-file`, `--evidence-per-technique`, `--include-alternatives`,
 `--max-repair-attempts`, and `--max-output-tokens` do not exist on this script.

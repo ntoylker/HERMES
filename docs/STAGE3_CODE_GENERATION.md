@@ -1,6 +1,6 @@
 # Stage 3 Code Generation
 
-`generate_code.py` turns a Stage 2 task plan (schema v2.0) into one Python file per task. Each task is sent to a **local LM Studio** model (via its OpenAI-compatible `/v1/chat/completions` endpoint) as an independent chat request; the script parses, syntax-checks, **deterministically fixes the reply's sibling imports, verifies it against the plan's symbol contract, and checks it for undeclared names**, persists it, then moves to the next task in dependency order.
+`generate_code.py` turns a Stage 2 task plan (schema v2.0) into one Python file per task. Each task is sent to a **local LM Studio** model (via its OpenAI-compatible `/v1/chat/completions` endpoint) by default, or to the **Gemini API** instead if `--provider gemini` is passed (see [Backend selection](#backend-selection) below), as an independent chat request; the script parses, syntax-checks, **deterministically fixes the reply's sibling imports, verifies it against the plan's symbol contract, and checks it for undeclared names**, persists it, then moves to the next task in dependency order.
 
 A Stage 2 plan is really a single multi-file program sliced into tasks, held together by the `provides`/`consumes` symbol contract and the `dependencies` edges. Because each file is generated independently by a small local model, the model frequently gets the cross-file glue wrong — redeclaring a symbol it was supposed to import, importing from the wrong module, or writing a non-portable import path. Rather than prompt the model for these and hope, Stage 3 computes the correct imports from information it already has and rewrites them in place; see [Cross-file contract enforcement](#cross-file-contract-enforcement) below.
 
@@ -68,17 +68,22 @@ It delegates to `pipeline_ast.find_undeclared_names(source)`, which is built on 
 
 ## Run
 
-Requires a local LM Studio server with the target model loaded (Developer tab → "Start Server", default `http://localhost:1234`). LM Studio's context window is fixed when the model is loaded (in its UI/CLI), not per-request — there is no `--num-ctx`-style flag here.
+By default (`--provider lmstudio`), requires a local LM Studio server with the target model loaded
+(Developer tab → "Start Server", default `http://localhost:1234`). LM Studio's context window is fixed
+when the model is loaded (in its UI/CLI), not per-request — there is no `--num-ctx`-style flag here.
 
 ```bash
 python generate_code.py data/plans/human_outs/PLAN_<stage1-stem>.json
+python generate_code.py data/plans/human_outs/PLAN_<stage1-stem>.json --provider gemini --gemini-model gemini-3.1-pro-preview
 ```
 
 Useful options:
 
+- `--provider {lmstudio,gemini}`: generation backend; default `lmstudio`
 - `--model`: LM Studio model identifier (check `GET /v1/models` on your server — LM Studio normalizes the
   HuggingFace repo name); default `qwen3.8-9b-heretic-uncensored-nvfp4`
 - `--base-url`: LM Studio OpenAI-compatible base URL; default `http://localhost:1234/v1`
+- `--gemini-model`: Gemini model identifier when `--provider gemini`; default `gemini-3.1-pro-preview`
 - `--timeout`: per-request timeout in seconds; default `1200` (at ~10 t/s GPU-only, a full 8192-token reply
   takes ~845s, so this leaves margin for a max-length generation)
 - `--output-dir`: destination for generated files and the manifest; default `data/code_scripts`
@@ -87,6 +92,26 @@ Useful options:
   never closes its code fence fails fast with `finish_reason: "length"` instead of silently consuming the
   model's whole context)
 - `--force`: regenerate every task even if already marked `"generated"` in the manifest
+
+## Backend selection
+
+`--provider gemini` requires `GEMINI_API_KEY` in the environment (or `.env`); `main()` checks this up
+front and exits before calling the model on any task if it's missing, rather than discovering the problem
+attempt-by-attempt. Unlike Stage 2 and Stage 2.5, there is **no automatic fallback** between backends here:
+`--provider` picks the backend for the entire run, it never switches mid-run on a failure.
+
+`_call_gemini` is a drop-in replacement for `_call_lmstudio` — it returns the same `(text, diagnostics)`
+shape and makes the same plain-text request (no `responseMimeType: application/json`, since this stage's
+contract is a fenced ` ```python ` code block in free text, not JSON), so every step of the accept gate
+above runs identically regardless of which backend answered. Error handling preserves the same
+failure-scope distinction `_call_lmstudio` already made: an unreachable Gemini API (`ConnectionError`)
+raises a plain `RuntimeError`, which aborts the whole run immediately (an outage affects every remaining
+task identically, so retrying per-task would just waste attempts); any other per-request problem — a bad
+HTTP status, or a response with no candidates — raises `_GeminiCallError`, a `requests.RequestException`
+subclass, so it is retried per-attempt exactly like an LM Studio `HTTPError` instead of aborting the run.
+
+Every Gemini call prints `[GEMINI] model=... prompt_tokens=... output_tokens=... total_tokens=...` to
+stderr, read from the response's own `modelVersion`/`usageMetadata` fields.
 
 ## Resuming
 
@@ -100,8 +125,14 @@ Every attempt — successful or failed — appends one record to `data/code_scri
 
 - `task_id`, `filename` (`null` on failure), `technique_ids`, `task_type`
 - `plan_id`, `stage1_ref`: traceability back to the Stage 2 plan and Stage 1 output file
-- `model`, `status` (`generated` or `failed`), `attempts`, `error`
-- `diagnostics`: `prompt_tokens`/`completion_tokens`/`total_tokens` from LM Studio's `usage` field, `finish_reason` (`"stop"` if the model closed cleanly, `"length"` if it hit `--max-tokens` and was cut off), plus `total_duration_s` measured as request wall-clock time (LM Studio's OpenAI-compatible endpoint doesn't report per-phase timings the way Ollama did)
+- `model`: the model actually used — `--gemini-model` when `--provider gemini`, otherwise `--model` (LM Studio)
+- `status` (`generated` or `failed`), `attempts`, `error`
+- `diagnostics`: `prompt_tokens`/`completion_tokens`/`total_tokens`, plus `finish_reason` and
+  `total_duration_s` (request wall-clock time). For LM Studio these token counts come from its
+  OpenAI-compatible `usage` field and `finish_reason` is `"stop"`/`"length"`; for Gemini they come from
+  the response's `usageMetadata` (`promptTokenCount`/`candidatesTokenCount`/`totalTokenCount`) and
+  `finish_reason` is the candidate's `finishReason` (e.g. `"STOP"`/`"MAX_TOKENS"`) — same field names in
+  the manifest either way, different source and vocabulary underneath depending on `--provider`.
 - `timestamp`
 
 Because generated files can import from their dependencies' generated modules by filename, renaming a file under `data/code_scripts/` requires updating any other generated file that imports it.
