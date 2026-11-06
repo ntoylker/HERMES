@@ -39,7 +39,7 @@ load_dotenv()
 DEFAULT_LMSTUDIO_URL = "http://localhost:1234/v1/chat/completions"
 DEFAULT_LMSTUDIO_MODEL = "local-model"
 DEFAULT_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
-DEFAULT_GEMINI_MODEL = "gemini-2.5-pro"
+DEFAULT_GEMINI_MODEL = "gemini-3.1-pro-preview"
 DEFAULT_TIMEOUT = 600
 DEFAULT_MAX_TOKENS = 16384
 DEFAULT_MAX_RETRIES = 3
@@ -650,6 +650,14 @@ class LLMProvider:
             raise RuntimeError(f"Gemini API error ({resp.status_code}): {resp.text[:400]}")
 
         resp_json = resp.json()
+        usage = resp_json.get("usageMetadata", {})
+        print(
+            f"[GEMINI] model={resp_json.get('modelVersion', self.gemini_model)} "
+            f"prompt_tokens={usage.get('promptTokenCount')} "
+            f"output_tokens={usage.get('candidatesTokenCount')} "
+            f"total_tokens={usage.get('totalTokenCount')}",
+            file=sys.stderr,
+        )
         candidates = resp_json.get("candidates") or []
         if not candidates:
             raise RuntimeError(f"Gemini returned no candidates: {resp_json}")
@@ -960,6 +968,12 @@ def main() -> None:
         default=DEFAULT_MAX_RETRIES,
         help=f"Max self-repair attempts (default: {DEFAULT_MAX_RETRIES}).",
     )
+    parser.add_argument(
+        "--gemini-model",
+        type=str,
+        default=DEFAULT_GEMINI_MODEL,
+        help=f"Gemini model used for --provider gemini, or as the LM Studio fallback (default: {DEFAULT_GEMINI_MODEL}).",
+    )
 
     args = parser.parse_args()
 
@@ -973,6 +987,7 @@ def main() -> None:
         provider=args.provider,
         lmstudio_url=args.lmstudio_url,
         lmstudio_model=args.lmstudio_model,
+        gemini_model=args.gemini_model,
         timeout=args.timeout,
         max_tokens=args.max_tokens,
     )
