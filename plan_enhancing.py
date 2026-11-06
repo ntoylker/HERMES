@@ -18,16 +18,20 @@ given up on. Reuses Stage 2's dual-backend pattern (LM Studio primary, Gemini fa
 
 import argparse
 import json
+import os
 import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 
 import requests
+from dotenv import load_dotenv
+
+load_dotenv()
 
 DEFAULT_LMSTUDIO_URL = "http://localhost:1234/v1/chat/completions"
 DEFAULT_LMSTUDIO_MODEL = "local-model"
-DEFAULT_GEMINI_MODEL = "gemini-2.0-flash"
+DEFAULT_GEMINI_MODEL = "gemini-3.1-pro-preview"
 DEFAULT_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 DEFAULT_TIMEOUT = 600
 DEFAULT_MAX_TOKENS = 16384
@@ -530,7 +534,7 @@ class LLMProvider:
         self.provider = provider
         self.lmstudio_url = lmstudio_url
         self.lmstudio_model = lmstudio_model
-        self.gemini_api_key = gemini_api_key
+        self.gemini_api_key = gemini_api_key or os.getenv("GEMINI_API_KEY")
         self.gemini_model = gemini_model
         self.timeout = timeout
         self.max_tokens = max_tokens
@@ -582,6 +586,14 @@ class LLMProvider:
         if resp.status_code != 200:
             raise RuntimeError(f"Gemini error ({resp.status_code}): {resp.text[:400]}")
         resp_json = resp.json()
+        usage = resp_json.get("usageMetadata", {})
+        print(
+            f"[GEMINI] model={resp_json.get('modelVersion', self.gemini_model)} "
+            f"prompt_tokens={usage.get('promptTokenCount')} "
+            f"output_tokens={usage.get('candidatesTokenCount')} "
+            f"total_tokens={usage.get('totalTokenCount')}",
+            file=sys.stderr,
+        )
         parts = (resp_json.get("candidates") or [{}])[0].get("content", {}).get("parts", [])
         if not parts:
             raise RuntimeError("Gemini returned no parts")
