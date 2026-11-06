@@ -9,6 +9,7 @@ syntax-checks, and persists that response, then moves to the next task.
 import argparse
 import ast
 import json
+import os
 import re
 import sys
 import time
@@ -16,6 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import requests
+from dotenv import load_dotenv
 
 from pipeline_ast import (
     collect_module_level_defs,
@@ -26,8 +28,12 @@ from pipeline_ast import (
     sibling_stem_from_import,
 )
 
+load_dotenv()
+
 DEFAULT_BASE_URL = "http://localhost:1234/v1"
 DEFAULT_MODEL = "qwen3.8-9b-heretic-uncensored-nvfp4"
+DEFAULT_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
+DEFAULT_GEMINI_MODEL = "gemini-3.1-pro-preview"
 DEFAULT_MAX_TOKENS = 16384
 DEFAULT_OUTPUT_DIR = "data/code_scripts"
 MANIFEST_NAME = "manifest.jsonl"
@@ -348,6 +354,56 @@ def _call_lmstudio(*, prompt: str, model: str, base_url: str, timeout: int, max_
     return payload["choices"][0]["message"]["content"], _extract_diagnostics(payload, wall_time_s)
 
 
+class _GeminiCallError(requests.RequestException):
+    """One Gemini request's problem (bad status, no candidates, empty response) -- deliberately a
+    RequestException subclass so _generate_task's per-attempt retry catches it exactly like an LM
+    Studio HTTPError, instead of escaping to main()'s abort-the-whole-run handler."""
+
+
+def _call_gemini(*, prompt: str, model: str, api_key: str, timeout: int, max_tokens: int) -> tuple[str, dict]:
+    # Drop-in alternative backend for one task attempt (--provider gemini). Plain-text generation,
+    # no responseMimeType/schema: Stage 3's contract is a fenced ```python block in free text,
+    # exactly like _call_lmstudio's reply, not JSON.
+    start = time.monotonic()
+    url = f"{DEFAULT_GEMINI_BASE_URL}/models/{model}:generateContent?key={api_key}"
+    payload = {
+        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+        "generationConfig": {"temperature": 0.2, "maxOutputTokens": max_tokens},
+    }
+    try:
+        resp = requests.post(url, json=payload, timeout=timeout)
+    except requests.ConnectionError as exc:
+        # Unreachable Gemini affects every remaining task identically; abort instead of retrying per-task.
+        raise RuntimeError(f"Could not reach Gemini API ({exc})") from exc
+    if resp.status_code != 200:
+        raise _GeminiCallError(f"Gemini API error ({resp.status_code}): {resp.text[:400]}")
+
+    resp_json = resp.json()
+    wall_time_s = time.monotonic() - start
+    candidates = resp_json.get("candidates") or []
+    if not candidates:
+        raise _GeminiCallError(f"Gemini returned no candidates: {json.dumps(resp_json)[:400]}")
+    parts = candidates[0].get("content", {}).get("parts", [])
+    text = "".join(p.get("text", "") for p in parts if isinstance(p, dict))
+
+    usage = resp_json.get("usageMetadata", {})
+    print(
+        f"[GEMINI] model={resp_json.get('modelVersion', model)} "
+        f"prompt_tokens={usage.get('promptTokenCount')} "
+        f"output_tokens={usage.get('candidatesTokenCount')} "
+        f"total_tokens={usage.get('totalTokenCount')}",
+        file=sys.stderr,
+    )
+    diagnostics = {
+        "prompt_tokens": usage.get("promptTokenCount"),
+        "completion_tokens": usage.get("candidatesTokenCount"),
+        "total_tokens": usage.get("totalTokenCount"),
+        "finish_reason": candidates[0].get("finishReason"),
+        "total_duration_s": wall_time_s,
+    }
+    return text, diagnostics
+
+
 def _resolve_symbol_sources(task: dict, tasks_by_id: dict[str, dict], dep_stems: dict[str, str]) -> dict[str, str]:
     # Which dependency's module actually provides each symbol, per the plan (not the generated
     # code). Shared by the contract check below and the deterministic import injector, so both
@@ -536,8 +592,11 @@ def _generate_task(
     task: dict,
     generated: dict[str, dict],
     tasks_by_id: dict[str, dict],
+    provider: str,
     model: str,
     base_url: str,
+    gemini_model: str,
+    gemini_api_key: str | None,
     timeout: int,
     max_attempts: int,
     max_tokens: int,
@@ -553,9 +612,15 @@ def _generate_task(
     for attempt in range(1, max_attempts + 1):
         attempt_prompt = _append_repair_note(prompt, last_error) if last_error else prompt
         try:
-            text, last_diagnostics = _call_lmstudio(
-                prompt=attempt_prompt, model=model, base_url=base_url, timeout=timeout, max_tokens=max_tokens
-            )
+            if provider == "gemini":
+                text, last_diagnostics = _call_gemini(
+                    prompt=attempt_prompt, model=gemini_model, api_key=gemini_api_key,
+                    timeout=timeout, max_tokens=max_tokens,
+                )
+            else:
+                text, last_diagnostics = _call_lmstudio(
+                    prompt=attempt_prompt, model=model, base_url=base_url, timeout=timeout, max_tokens=max_tokens
+                )
         except requests.RequestException as exc:
             last_error = f"model request failed: {exc}"
             last_diagnostics = None
@@ -581,8 +646,19 @@ def main() -> None:
         description="Stage 3: generate per-task Python files from a Stage 2 plan via a local LM Studio model"
     )
     parser.add_argument("stage2_plan", help="Path to a Stage 2 data/plans/human_outs/PLAN_<stage1-stem>.json file")
+    parser.add_argument(
+        "--provider",
+        choices=["lmstudio", "gemini"],
+        default="lmstudio",
+        help="Generation backend: lmstudio (default, local) or gemini (requires GEMINI_API_KEY).",
+    )
     parser.add_argument("--model", default=DEFAULT_MODEL, help="LM Studio model identifier")
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL, help="LM Studio OpenAI-compatible base URL")
+    parser.add_argument(
+        "--gemini-model",
+        default=DEFAULT_GEMINI_MODEL,
+        help=f"Gemini model identifier when --provider gemini (default: {DEFAULT_GEMINI_MODEL}).",
+    )
     parser.add_argument("--timeout", type=int, default=1200, help="Per-request timeout in seconds")
     parser.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR, help="Directory for generated .py files and manifest.jsonl")
     parser.add_argument("--max-attempts", type=int, default=3, help="Attempts per task before skipping it")
@@ -591,6 +667,11 @@ def main() -> None:
     )
     parser.add_argument("--force", action="store_true", help="Regenerate every task even if already present in the manifest")
     args = parser.parse_args()
+
+    gemini_api_key = os.getenv("GEMINI_API_KEY")
+    if args.provider == "gemini" and not gemini_api_key:
+        print("Aborting: GEMINI_API_KEY environment variable is required for --provider gemini.", file=sys.stderr)
+        sys.exit(1)
 
     plan_path = Path(args.stage2_plan)
     plan = _load_plan(plan_path)
@@ -628,8 +709,11 @@ def main() -> None:
                 task=task,
                 generated=generated,
                 tasks_by_id=tasks_by_id,
+                provider=args.provider,
                 model=args.model,
                 base_url=args.base_url,
+                gemini_model=args.gemini_model,
+                gemini_api_key=gemini_api_key,
                 timeout=args.timeout,
                 max_attempts=args.max_attempts,
                 max_tokens=args.max_tokens,
@@ -653,7 +737,7 @@ def main() -> None:
             "task_type": task.get("task_type"),
             "plan_id": plan.get("plan_id"),
             "stage1_ref": plan.get("stage1_ref"),
-            "model": args.model,
+            "model": args.gemini_model if args.provider == "gemini" else args.model,
             "status": "failed",
             "attempts": attempts,
             "error": error,
