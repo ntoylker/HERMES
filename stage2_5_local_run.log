@@ -1,5 +1,0 @@
-[*] Loading Stage 2 plan: data\plans\human_outs\PLAN_20261106_19_18_37.json
-[*] Enhancing plan (up to 6 LLM attempt(s))...
-[+] Wrote enhanced plan to data\plans\enhanced_outs\PLAN_20261106_19_18_37.json
-[+] Recorded in manifest: data\plans\enhanced_outs\enhancement_manifest.jsonl
-[+] Plan enhancement successful

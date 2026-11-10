@@ -1,6 +1,0 @@
-[*] Starting Stage 2 Planner for: data\human_outs\20261106_19_18_37.json
-[*] Primary provider: lmstudio
-[*] Planner attempt 1/6...
-[+] Task plan validated successfully on attempt 1!
-[+] Saved machine record to data\plans\machine_outs\PLAN_20261106_19_18_37.jsonl
-[+] Saved human summary to data\plans\human_outs\PLAN_20261106_19_18_37.json
