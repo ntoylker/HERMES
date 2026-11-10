@@ -19,6 +19,7 @@ from pathlib import Path
 import requests
 from dotenv import load_dotenv
 
+import llm_client
 from pipeline_ast import (
     collect_module_level_defs,
     collect_module_level_imports,
@@ -30,6 +31,9 @@ from pipeline_ast import (
 
 load_dotenv()
 
+# Fallbacks only: the lmstudio provider now talks to the server through llm_client.py, which reads
+# LLM_BASE_URL/LLM_MODEL from the environment. These constants are exported into that environment at
+# startup (main()) only when neither --base-url/--model nor the env var itself was already set.
 DEFAULT_BASE_URL = "http://localhost:1234/v1"
 DEFAULT_MODEL = "qwen3.8-9b-heretic-uncensored-nvfp4"
 DEFAULT_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
@@ -313,57 +317,22 @@ def _append_repair_note(prompt: str, reason: str) -> str:
     )
 
 
-def _extract_diagnostics(payload: dict, wall_time_s: float) -> dict:
-    # LM Studio's OpenAI-compatible endpoint reports token counts via `usage`, not per-phase durations;
-    # wall_time_s is measured around the request in _call_lmstudio instead. finish_reason "length" means
-    # the reply was cut off by --max-tokens rather than the model choosing to stop.
-    usage = payload.get("usage") or {}
-    choice = (payload.get("choices") or [{}])[0]
-    return {
-        "prompt_tokens": usage.get("prompt_tokens"),
-        "completion_tokens": usage.get("completion_tokens"),
-        "total_tokens": usage.get("total_tokens"),
-        "finish_reason": choice.get("finish_reason"),
-        "total_duration_s": wall_time_s,
-    }
-
-
-def _call_lmstudio(*, prompt: str, model: str, base_url: str, timeout: int, max_tokens: int) -> tuple[str, dict]:
-    # Single non-streaming chat call to the local LM Studio server for one task attempt.
-    # Context window is fixed at model-load time in LM Studio, so it's not a per-request option here;
-    # max_tokens only bounds the completion, giving a predictable finish_reason="length" instead of an
-    # unbounded generation that never closes its code fence.
-    start = time.monotonic()
-    try:
-        resp = requests.post(
-            f"{base_url.rstrip('/')}/chat/completions",
-            json={
-                "model": model,
-                "messages": [{"role": "user", "content": prompt}],
-                "stream": False,
-                "max_tokens": max_tokens,
-            },
-            timeout=timeout,
-        )
-    except requests.ConnectionError as exc:
-        # Unreachable LM Studio affects every remaining task identically; abort instead of retrying per-task.
-        raise RuntimeError(f"Could not reach LM Studio at {base_url} ({exc})") from exc
-    resp.raise_for_status()
-    payload = resp.json()
-    wall_time_s = time.monotonic() - start
-    return payload["choices"][0]["message"]["content"], _extract_diagnostics(payload, wall_time_s)
+# The lmstudio provider's HTTP call now goes through llm_client.call() (via generate_with_retries,
+# see _generate_task_lmstudio below) instead of a bespoke `requests.post` here -- same OpenAI-compatible
+# /chat/completions endpoint, but llm_client owns the request, the per-call JSONL log, and the
+# prompt/completion-token and finish_reason diagnostics for it.
 
 
 class _GeminiCallError(requests.RequestException):
     """One Gemini request's problem (bad status, no candidates, empty response) -- deliberately a
-    RequestException subclass so _generate_task's per-attempt retry catches it exactly like an LM
-    Studio HTTPError, instead of escaping to main()'s abort-the-whole-run handler."""
+    RequestException subclass so _generate_task_gemini's per-attempt retry catches it exactly like an
+    LM Studio HTTPError, instead of escaping to main()'s abort-the-whole-run handler."""
 
 
 def _call_gemini(*, prompt: str, model: str, api_key: str, timeout: int, max_tokens: int) -> tuple[str, dict]:
     # Drop-in alternative backend for one task attempt (--provider gemini). Plain-text generation,
-    # no responseMimeType/schema: Stage 3's contract is a fenced ```python block in free text,
-    # exactly like _call_lmstudio's reply, not JSON.
+    # no responseMimeType/schema: Stage 3's contract is a fenced ```python block in free text, exactly
+    # like the lmstudio provider's reply (now via llm_client.call(), see _generate_task_lmstudio), not JSON.
     start = time.monotonic()
     url = f"{DEFAULT_GEMINI_BASE_URL}/models/{model}:generateContent?key={api_key}"
     payload = {
@@ -587,21 +556,20 @@ def _check_undeclared_names(code: str) -> None:
         )
 
 
-def _generate_task(
+def _generate_task_gemini(
     *,
     task: dict,
     generated: dict[str, dict],
     tasks_by_id: dict[str, dict],
-    provider: str,
     model: str,
-    base_url: str,
-    gemini_model: str,
-    gemini_api_key: str | None,
+    api_key: str | None,
     timeout: int,
     max_attempts: int,
     max_tokens: int,
 ) -> tuple[str | None, int, str | None, dict | None, str | None]:
-    # Runs one task through up to max_attempts model calls, appending a repair note after each rejection.
+    # Runs one task through up to max_attempts Gemini calls, appending a repair note after each
+    # rejection (llm_client has no Gemini backend, so --provider gemini keeps its own loop; only the
+    # lmstudio provider moved to llm_client.generate_with_retries, see _generate_task_lmstudio below).
     # Returns (code, attempts, error, diagnostics, rejected_code) — rejected_code is the last attempt's
     # best-effort text (set only when every attempt was rejected) so the caller can still persist it for review.
     prompt = _build_task_prompt(task, generated)
@@ -612,15 +580,9 @@ def _generate_task(
     for attempt in range(1, max_attempts + 1):
         attempt_prompt = _append_repair_note(prompt, last_error) if last_error else prompt
         try:
-            if provider == "gemini":
-                text, last_diagnostics = _call_gemini(
-                    prompt=attempt_prompt, model=gemini_model, api_key=gemini_api_key,
-                    timeout=timeout, max_tokens=max_tokens,
-                )
-            else:
-                text, last_diagnostics = _call_lmstudio(
-                    prompt=attempt_prompt, model=model, base_url=base_url, timeout=timeout, max_tokens=max_tokens
-                )
+            text, last_diagnostics = _call_gemini(
+                prompt=attempt_prompt, model=model, api_key=api_key, timeout=timeout, max_tokens=max_tokens,
+            )
         except requests.RequestException as exc:
             last_error = f"model request failed: {exc}"
             last_diagnostics = None
@@ -640,6 +602,95 @@ def _generate_task(
     return None, max_attempts, last_error, last_diagnostics, last_rejected_code
 
 
+def _make_lmstudio_validate(task: dict, tasks_by_id: dict[str, dict], dep_stems: dict[str, str], result: dict):
+    # Closure around generate_with_retries' validate(text) -> (ok, error) contract. Runs the same
+    # four-step accept gate _generate_task_gemini runs inline (parse fence -> inject sibling imports
+    # -> contract check -> undeclared-name check), but must also smuggle out the one thing
+    # generate_with_retries doesn't hand back on success: the deterministically import-injected code
+    # (not the model's raw text), which is what actually has to be persisted. `result` is that side
+    # channel, and also tracks how many attempts actually reached validation (an "empty answer" attempt
+    # inside llm_client never calls validate at all, so this can undercount by that many -- acceptable,
+    # since it's a diagnostics count, not a correctness check).
+    def validate(text: str) -> tuple[bool, str]:
+        result["attempts"] = result.get("attempts", 0) + 1
+        try:
+            code = _parse_response(text)
+            code = _inject_dependency_imports(code, task, tasks_by_id, dep_stems)
+            _validate_contract(code, task, tasks_by_id, dep_stems)
+            _check_undeclared_names(code)
+        except _ResponseRejected as exc:
+            result["rejected_code"] = exc.code
+            return False, str(exc)
+        result["code"] = code
+        return True, ""
+    return validate
+
+
+def _generate_task_lmstudio(
+    *,
+    task: dict,
+    generated: dict[str, dict],
+    tasks_by_id: dict[str, dict],
+    timeout: int,
+    max_attempts: int,
+    max_tokens: int,
+    tag: str,
+) -> tuple[str | None, int, str | None, dict | None, str | None]:
+    # lmstudio provider: llm_client.generate_with_retries() replaces the old manual attempt loop.
+    # Its "smart retry" sends system(none here)+original task+last answer+error as a 4-message
+    # conversation (see llm_client.py's retry_messages()), rather than re-stating the whole task text
+    # with a note appended (_append_repair_note, still used by the gemini path above) -- same prompt
+    # prefix on every attempt, so a caching server reuses it. Base URL, model and per-request timeout
+    # come from llm_client's own env config (LLM_BASE_URL/LLM_MODEL/LLM_TIMEOUT_S), set once in main().
+    prompt = _build_task_prompt(task, generated)
+    dep_stems = _dependency_module_stems(task, generated)
+    result: dict = {}
+    try:
+        llm_client.generate_with_retries(
+            None, prompt, validate=_make_lmstudio_validate(task, tasks_by_id, dep_stems, result),
+            max_retries=max(max_attempts - 1, 0), tag=tag,
+            max_tokens=max_tokens, temperature=None, top_p=None,
+        )
+    except llm_client.RetriesExhausted as exc:
+        rejected = result.get("rejected_code") or _best_effort_code(exc.last_output or "")
+        return None, result.get("attempts", exc.attempts), exc.error, None, rejected
+    except llm_client.LLMError as exc:
+        # Unreachable server / HTTP error affects every remaining task identically; abort the whole
+        # run instead of burning through max_attempts retries on a dead connection (same intent as the
+        # old _call_lmstudio's requests.ConnectionError -> RuntimeError).
+        raise RuntimeError(str(exc)) from exc
+    # Per-call prompt/completion tokens, finish_reason and timings are no longer duplicated into this
+    # task's diagnostics dict -- llm_client already logged them (one line per attempt, tag=f"{tag}#N")
+    # to LLM_LOG_PATH, so that log is the detail record now (same non-duplication policy Stage 4a's
+    # docs call out for its own deliberately-redundant-but-cheap contract re-check).
+    return result["code"], result.get("attempts", max_attempts), None, None, None
+
+
+def _generate_task(
+    *,
+    task: dict,
+    generated: dict[str, dict],
+    tasks_by_id: dict[str, dict],
+    provider: str,
+    gemini_model: str,
+    gemini_api_key: str | None,
+    timeout: int,
+    max_attempts: int,
+    max_tokens: int,
+) -> tuple[str | None, int, str | None, dict | None, str | None]:
+    # Dispatches to the provider-specific implementation. Returns (code, attempts, error, diagnostics,
+    # rejected_code) either way -- see the two functions above for what each field means per provider.
+    if provider == "gemini":
+        return _generate_task_gemini(
+            task=task, generated=generated, tasks_by_id=tasks_by_id, model=gemini_model,
+            api_key=gemini_api_key, timeout=timeout, max_attempts=max_attempts, max_tokens=max_tokens,
+        )
+    return _generate_task_lmstudio(
+        task=task, generated=generated, tasks_by_id=tasks_by_id, timeout=timeout,
+        max_attempts=max_attempts, max_tokens=max_tokens, tag=task["task_id"],
+    )
+
+
 def main() -> None:
     # CLI entry point: load plan -> generate/resume each task in dependency order -> persist files + manifest.
     parser = argparse.ArgumentParser(
@@ -652,8 +703,16 @@ def main() -> None:
         default="lmstudio",
         help="Generation backend: lmstudio (default, local) or gemini (requires GEMINI_API_KEY).",
     )
-    parser.add_argument("--model", default=DEFAULT_MODEL, help="LM Studio model identifier")
-    parser.add_argument("--base-url", default=DEFAULT_BASE_URL, help="LM Studio OpenAI-compatible base URL")
+    parser.add_argument(
+        "--model", default=None,
+        help=f"LM Studio model identifier. Overrides the LLM_MODEL env var if set; otherwise falls back "
+             f"to LLM_MODEL, then to {DEFAULT_MODEL!r}.",
+    )
+    parser.add_argument(
+        "--base-url", default=None,
+        help=f"LM Studio OpenAI-compatible base URL. Overrides the LLM_BASE_URL env var if set; otherwise "
+             f"falls back to LLM_BASE_URL, then to {DEFAULT_BASE_URL!r}.",
+    )
     parser.add_argument(
         "--gemini-model",
         default=DEFAULT_GEMINI_MODEL,
@@ -683,6 +742,36 @@ def main() -> None:
     manifest_path = output_dir / MANIFEST_NAME
     latest_records = {} if args.force else _load_latest_manifest_records(manifest_path)
 
+    resolved_model = args.gemini_model
+    if args.provider == "lmstudio":
+        # --model/--base-url/--timeout are now thin overrides onto llm_client's own env config
+        # (LLM_BASE_URL/LLM_MODEL/LLM_TIMEOUT_S) rather than values threaded through call-by-call --
+        # a flag wins when given, an already-exported env var wins next, and the constants above are
+        # the last-resort default so behavior is unchanged for a run that sets neither.
+        if args.base_url:
+            os.environ["LLM_BASE_URL"] = args.base_url
+        else:
+            os.environ.setdefault("LLM_BASE_URL", DEFAULT_BASE_URL)
+        if args.model:
+            os.environ["LLM_MODEL"] = args.model
+        else:
+            os.environ.setdefault("LLM_MODEL", DEFAULT_MODEL)
+        os.environ["LLM_TIMEOUT_S"] = str(args.timeout)
+        os.environ.setdefault("LLM_LOG_PATH", str(output_dir / "llm_calls.jsonl"))
+        # Fail fast on an unreachable/misconfigured server, before touching any task, the same way the
+        # Gemini branch above already fails fast on a missing API key.
+        try:
+            resolved_model = llm_client.resolve_model()
+        except llm_client.LLMError as exc:
+            print(f"Aborting: {exc}", file=sys.stderr)
+            sys.exit(1)
+
+    # THESIS_OUT_DIR-backed checkpoints: on Colab this is Drive-mounted and survives a runtime
+    # disconnect that wipes --output-dir, so re-running after a disconnect can skip a task's model
+    # call even when the manifest-based resume check below can't (its target file is gone). Scoped by
+    # plan stem so multiple plans sharing one THESIS_OUT_DIR don't collide. See llm_client.checkpoint().
+    checkpoint_dir = Path(os.environ.get("THESIS_OUT_DIR", str(output_dir))) / "checkpoints" / plan_path.stem
+
     generated: dict[str, dict] = {}  # task_id -> {filename, code}, kept in memory to feed later dependents
     generated_count = 0
     failed_count = 0
@@ -704,23 +793,47 @@ def main() -> None:
                 continue
 
         print(f"[{task_id}] generating: {task.get('suggested_filename')}")
-        try:
+
+        # produce_meta is _generate_task's side channel: checkpoint() only ever persists/returns the
+        # code text, so attempts/error/diagnostics/rejected_code (needed for the manifest record
+        # below) have to travel out through this dict instead of checkpoint()'s own return value.
+        produce_meta: dict = {}
+
+        def _produce() -> str:
             code, attempts, error, diagnostics, rejected_code = _generate_task(
                 task=task,
                 generated=generated,
                 tasks_by_id=tasks_by_id,
                 provider=args.provider,
-                model=args.model,
-                base_url=args.base_url,
                 gemini_model=args.gemini_model,
                 gemini_api_key=gemini_api_key,
                 timeout=args.timeout,
                 max_attempts=args.max_attempts,
                 max_tokens=args.max_tokens,
             )
+            produce_meta.update(attempts=attempts, error=error, diagnostics=diagnostics, rejected_code=rejected_code)
+            if code is None:
+                raise RuntimeError(error or "generation failed")
+            return code
+
+        try:
+            # A checkpoint hit skips _produce() (and so the model call) entirely and returns the
+            # previously-saved code; produce_meta then stays empty, which the manifest record below
+            # reports as attempts=None / diagnostics=None rather than fabricating a count.
+            code = llm_client.checkpoint(checkpoint_dir / f"{task_id}.py", _produce)
         except RuntimeError as exc:
-            print(f"\nAborting: {exc}", file=sys.stderr)
-            sys.exit(1)
+            if not produce_meta:
+                # produce_meta never got populated, so this RuntimeError came from _generate_task
+                # itself before it could record an outcome (e.g. llm_client.LLMError for an
+                # unreachable lmstudio server, or a Gemini ConnectionError) -- a run-wide condition
+                # that affects every remaining task identically, so abort instead of moving on.
+                print(f"\nAborting: {exc}", file=sys.stderr)
+                sys.exit(1)
+            code = None
+        attempts = produce_meta.get("attempts")
+        error = produce_meta.get("error")
+        diagnostics = produce_meta.get("diagnostics")
+        rejected_code = produce_meta.get("rejected_code")
 
         # Task ID becomes the filename prefix; sanitize suggested_filename too since plans can be hand-edited.
         # Computed regardless of outcome: the success path writes to it directly, the failure path prefixes it.
@@ -737,7 +850,7 @@ def main() -> None:
             "task_type": task.get("task_type"),
             "plan_id": plan.get("plan_id"),
             "stage1_ref": plan.get("stage1_ref"),
-            "model": args.gemini_model if args.provider == "gemini" else args.model,
+            "model": resolved_model,
             "status": "failed",
             "attempts": attempts,
             "error": error,

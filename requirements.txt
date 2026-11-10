@@ -1,0 +1,20 @@
+# Third-party dependencies for the HERMES pipeline.
+#
+# Derived by scanning every top-level *.py script's own import statements (not .venv's bundled
+# packages) -- see CLAUDE.md, which notes no requirements.txt/pyproject.toml existed before this
+# file. All Gemini/LM Studio calls go over raw HTTP via `requests` (generate_code.py,
+# hosted_embeddings.py, decompose_query.py, generate_offense_rag.py, plan_tasks.py,
+# plan_enhancing.py) or stdlib `urllib` (llm_client.py) -- there is no `openai`/`google-
+# generativeai` SDK dependency anywhere in the pipeline.
+#
+# Versions below are floors, not exact pins (this repo has never pinned dependencies -- see
+# CLAUDE.md), set to the versions verified working in the local .venv.
+#
+# pydantic is only exercised by llm_client.py's optional pydantic_validator() helper; llm_client.py
+# itself is otherwise standard-library-only. Kept here since it's a real, if narrow, dependency.
+requests>=2.34.2
+numpy>=2.5.1
+tqdm>=4.70.1
+python-dotenv>=1.2.2
+mitreattack-python>=6.3.1
+pydantic>=2.13.5
