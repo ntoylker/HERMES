@@ -1,0 +1,52 @@
+
+$ C:\Users\nikos\Desktop\HERMES\mvp\.venv\Scripts\python.exe generate_offense_rag.py <query> --index-dir artifacts/offense_index_linux
+data\human_outs\20261106_19_18_37.json
+
+$ C:\Users\nikos\Desktop\HERMES\mvp\.venv\Scripts\python.exe plan_tasks.py --stage1-input data\human_outs\20261106_19_18_37.json --provider gemini --gemini-model gemini-3.1-pro-preview
+[GEMINI] model=gemini-3.1-pro-preview prompt_tokens=7321 output_tokens=53 total_tokens=10357
+[GEMINI] model=gemini-3.1-pro-preview prompt_tokens=7480 output_tokens=825 total_tokens=10456
+[*] Starting Stage 2 Planner for: data\human_outs\20261106_19_18_37.json
+[*] Primary provider: gemini
+[*] Planner attempt 1/3...
+[-] Validation failed on attempt 1: ["Plan must contain a non-empty 'tasks' array."]
+[*] Planner attempt 2/3...
+[+] Task plan validated successfully on attempt 2!
+[+] Saved machine record to data\plans\machine_outs\PLAN_20261106_19_18_37.jsonl
+[+] Saved human summary to data\plans\human_outs\PLAN_20261106_19_18_37.json
+
+$ C:\Users\nikos\Desktop\HERMES\mvp\.venv\Scripts\python.exe plan_enhancing.py data\plans\human_outs\PLAN_20261106_19_18_37.json --provider gemini --gemini-model gemini-3.1-pro-preview
+[GEMINI] model=gemini-3.1-pro-preview prompt_tokens=2263 output_tokens=229 total_tokens=3497
+[*] Loading Stage 2 plan: data\plans\human_outs\PLAN_20261106_19_18_37.json
+[*] Enhancing plan (up to 3 LLM attempt(s))...
+[+] Wrote enhanced plan to data\plans\enhanced_outs\PLAN_20261106_19_18_37.json
+[+] Recorded in manifest: data\plans\enhanced_outs\enhancement_manifest.jsonl
+[+] Plan enhancement successful
+
+$ C:\Users\nikos\Desktop\HERMES\mvp\.venv\Scripts\python.exe generate_code.py data\plans\enhanced_outs\PLAN_20261106_19_18_37.json --model qwen3.8-9b-heretic-uncensored@q4_k_m --timeout 1200
+[TASK_001] generating: safe_file_archiver.py
+[TASK_001] wrote data\code_scripts\TASK_001_safe_file_archiver.py
+
+Done: 1 generated, 0 failed, 0 skipped. Manifest: data\code_scripts\manifest.jsonl
+
+=== Stage 4 targets ===
+  run dir: data\code_scripts
+  plan:    data\plans\enhanced_outs\PLAN_20261106_19_18_37.json
+
+$ C:\Users\nikos\Desktop\HERMES\mvp\.venv\Scripts\python.exe validate_scripts.py data\code_scripts --plan data\plans\enhanced_outs\PLAN_20261106_19_18_37.json
+[TASK_001] OK: TASK_001_safe_file_archiver.py
+
+Done: 1 passed, 0 warned, 0 failed. Manifest: data\code_scripts\validation_manifest.jsonl
+
+$ C:\Users\nikos\Desktop\HERMES\mvp\.venv\Scripts\python.exe run_tier1_sandbox.py data\code_scripts --plan data\plans\enhanced_outs\PLAN_20261106_19_18_37.json
+[TASK_001] running: TASK_001_safe_file_archiver.py
+    OK (0.02s)
+
+Done: 1 ok, 0 timed out, 0 failed. Manifest: C:\Users\nikos\Desktop\HERMES\mvp\data\code_scripts\tier1_manifest.jsonl
+
+=== mvp-v3 summary ===
+  Stage 1   (Linux-filtered RAG):  ok
+  Stage 2   (Gemini planning):     ok
+  Stage 2.5 (Gemini enhancement):  ok
+  Stage 3   (local LM Studio):     ok
+  Stage 4a  (static):              pass
+  Tier 1    (container run):       pass
