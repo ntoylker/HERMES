@@ -21,3 +21,6 @@ data/
 data/raw/enterprise-attack/
 
 # OUTPUTS FROM RUNNING THE MODEL
+
+# Tier 2 per-run VM captures (event streams can be large)
+tier2_evidence/
