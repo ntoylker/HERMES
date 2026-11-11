@@ -1,0 +1,216 @@
+{
+  "query": "Generate a reverse shell code, that opens a shell in 0.0.0.0 interface and port 5522 that i can connect from the outside lan my terminal and execute shell commands from my remote connection",
+  "decomposition": {
+    "decomposed": false,
+    "sub_queries": [
+      {
+        "id": "Q1",
+        "text": "Generate a reverse shell code, that opens a shell in 0.0.0.0 interface and port 5522 that i can connect from the outside lan my terminal and execute shell commands from my remote connection"
+      }
+    ],
+    "guardrails": {
+      "warnings": [],
+      "raw_decomposition_needed": false,
+      "fallback_used": false,
+      "fallback_reason": null
+    }
+  },
+  "parts": [
+    {
+      "id": "Q1",
+      "text": "Generate a reverse shell code, that opens a shell in 0.0.0.0 interface and port 5522 that i can connect from the outside lan my terminal and execute shell commands from my remote connection",
+      "retrieved_techniques": [
+        {
+          "mitre_id": "T1059.003",
+          "name": "Windows Command Shell",
+          "hybrid_score": 0.6967044353485108,
+          "vector_max": 0.6467044353485107,
+          "lexical_best": 1.0
+        },
+        {
+          "mitre_id": "T1059.004",
+          "name": "Unix Shell",
+          "hybrid_score": 0.6678985996679826,
+          "vector_max": 0.6633531451225281,
+          "lexical_best": 0.09090909090909091
+        },
+        {
+          "mitre_id": "T1546.004",
+          "name": "Unix Shell Configuration Modification",
+          "hybrid_score": 0.6657667398452759,
+          "vector_max": 0.6407667398452759,
+          "lexical_best": 0.5
+        },
+        {
+          "mitre_id": "T1059",
+          "name": "Command and Scripting Interpreter",
+          "hybrid_score": 0.6593974280357361,
+          "vector_max": 0.6543974280357361,
+          "lexical_best": 0.1
+        },
+        {
+          "mitre_id": "T1505.003",
+          "name": "Web Shell",
+          "hybrid_score": 0.6549919366836547,
+          "vector_max": 0.6424919366836548,
+          "lexical_best": 0.25
+        },
+        {
+          "mitre_id": "T1133",
+          "name": "External Remote Services",
+          "hybrid_score": 0.6415492296218872,
+          "vector_max": 0.6415492296218872,
+          "lexical_best": 0.0
+        },
+        {
+          "mitre_id": "T1059.001",
+          "name": "PowerShell",
+          "hybrid_score": 0.6394267082214355,
+          "vector_max": 0.6394267082214355,
+          "lexical_best": 0.0
+        },
+        {
+          "mitre_id": "T1546.005",
+          "name": "Trap",
+          "hybrid_score": 0.6345532536506653,
+          "vector_max": 0.6345532536506653,
+          "lexical_best": 0.0
+        }
+      ],
+      "top_techniques": [
+        {
+          "mitre_id": "T1059.004",
+          "name": "Unix Shell",
+          "rationale": "The user is requesting code to create a reverse shell, which provides remote command execution. This is a common capability of malware that uses Unix shell scripts to establish connections back to an attacker. Several malware families like Chaos, CoinTicker, and CallMe use Unix shells to create reverse shells for command and control.",
+          "citations": [
+            "S4",
+            "S5",
+            "S6"
+          ]
+        },
+        {
+          "mitre_id": "T1059.003",
+          "name": "Windows Command Shell",
+          "rationale": "The user's request for a reverse shell is a common technique for gaining interactive control over a system. This can be achieved using the Windows Command Shell (cmd.exe). Malware such as HTTPTroy, CoinTicker, and PHOREAL are known to use the Windows Command Shell to create reverse shells.",
+          "citations": [
+            "S1",
+            "S2",
+            "S3"
+          ]
+        },
+        {
+          "mitre_id": "T1059",
+          "name": "Command and Scripting Interpreter",
+          "rationale": "The user is asking for a 'reverse shell code', which implies the use of a command and scripting interpreter to execute commands. This technique covers the general abuse of interpreters like shells (Unix, Windows) or other scripting languages (Perl) to establish remote access, such as a reverse shell.",
+          "citations": [
+            "S9",
+            "S10",
+            "S11"
+          ]
+        }
+      ],
+      "alternatives": [
+        {
+          "mitre_id": "T1505.003",
+          "name": "Web Shell",
+          "rationale": "A web shell is a script placed on a web server that can provide a command-line interface or a reverse shell connection. While the user did not specify a web server context, a web shell is a common way to achieve the goal of remote command execution and could be used to establish the requested shell.",
+          "citations": [
+            "S12",
+            "S13",
+            "S14"
+          ]
+        },
+        {
+          "mitre_id": "T1133",
+          "name": "External Remote Services",
+          "rationale": "The user wants to connect to a shell 'from the outside lan'. This implies leveraging an external-facing service to gain access. While a reverse shell typically initiates an outbound connection, a bind shell (which listens on an interface as requested by the user) would expose a service externally, aligning with the concept of using external remote services for access.",
+          "citations": [
+            "S16",
+            "S17"
+          ]
+        },
+        {
+          "mitre_id": "T1546.004",
+          "name": "Unix Shell Configuration Modification",
+          "rationale": "An adversary might place the reverse shell code within a Unix shell configuration file (e.g., .bashrc, /etc/profile). This would not only create the shell but also establish persistence, causing the reverse shell to be initiated whenever a user logs in or a new shell is started.",
+          "citations": [
+            "S7",
+            "S8"
+          ]
+        }
+      ],
+      "summary": "The user is asking for code to create a reverse shell, a common method for adversaries to gain interactive remote access and execute commands on a compromised system. This is achieved by abusing command and scripting interpreters, such as the Unix Shell or Windows Command Shell, to initiate an outbound connection to an attacker-controlled machine.",
+      "citation_validation": {
+        "dropped": [],
+        "warnings": []
+      }
+    }
+  ],
+  "top_techniques": [
+    {
+      "mitre_id": "T1059.004",
+      "name": "Unix Shell",
+      "rationale": "The user is requesting code to create a reverse shell, which provides remote command execution. This is a common capability of malware that uses Unix shell scripts to establish connections back to an attacker. Several malware families like Chaos, CoinTicker, and CallMe use Unix shells to create reverse shells for command and control.",
+      "citations": [
+        "S4",
+        "S5",
+        "S6"
+      ]
+    },
+    {
+      "mitre_id": "T1059.003",
+      "name": "Windows Command Shell",
+      "rationale": "The user's request for a reverse shell is a common technique for gaining interactive control over a system. This can be achieved using the Windows Command Shell (cmd.exe). Malware such as HTTPTroy, CoinTicker, and PHOREAL are known to use the Windows Command Shell to create reverse shells.",
+      "citations": [
+        "S1",
+        "S2",
+        "S3"
+      ]
+    },
+    {
+      "mitre_id": "T1059",
+      "name": "Command and Scripting Interpreter",
+      "rationale": "The user is asking for a 'reverse shell code', which implies the use of a command and scripting interpreter to execute commands. This technique covers the general abuse of interpreters like shells (Unix, Windows) or other scripting languages (Perl) to establish remote access, such as a reverse shell.",
+      "citations": [
+        "S9",
+        "S10",
+        "S11"
+      ]
+    }
+  ],
+  "alternatives": [
+    {
+      "mitre_id": "T1505.003",
+      "name": "Web Shell",
+      "rationale": "A web shell is a script placed on a web server that can provide a command-line interface or a reverse shell connection. While the user did not specify a web server context, a web shell is a common way to achieve the goal of remote command execution and could be used to establish the requested shell.",
+      "citations": [
+        "S12",
+        "S13",
+        "S14"
+      ]
+    },
+    {
+      "mitre_id": "T1133",
+      "name": "External Remote Services",
+      "rationale": "The user wants to connect to a shell 'from the outside lan'. This implies leveraging an external-facing service to gain access. While a reverse shell typically initiates an outbound connection, a bind shell (which listens on an interface as requested by the user) would expose a service externally, aligning with the concept of using external remote services for access.",
+      "citations": [
+        "S16",
+        "S17"
+      ]
+    },
+    {
+      "mitre_id": "T1546.004",
+      "name": "Unix Shell Configuration Modification",
+      "rationale": "An adversary might place the reverse shell code within a Unix shell configuration file (e.g., .bashrc, /etc/profile). This would not only create the shell but also establish persistence, causing the reverse shell to be initiated whenever a user logs in or a new shell is started.",
+      "citations": [
+        "S7",
+        "S8"
+      ]
+    }
+  ],
+  "summary": "The user is asking for code to create a reverse shell, a common method for adversaries to gain interactive remote access and execute commands on a compromised system. This is achieved by abusing command and scripting interpreters, such as the Unix Shell or Windows Command Shell, to initiate an outbound connection to an attacker-controlled machine.",
+  "citation_validation": {
+    "dropped": [],
+    "warnings": []
+  }
+}

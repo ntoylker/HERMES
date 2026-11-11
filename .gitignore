@@ -15,9 +15,39 @@ __pycache__/
 # Generated runtime folders
 cache/
 logs/
-data/
+data/*
 
 # Original STIX bundle (too large for standard GitHub)
 data/raw/enterprise-attack/
 
 # OUTPUTS FROM RUNNING THE MODEL
+
+# --- selectively track pipeline test-run output folders (synced between machines) ---
+# "data/*" above ignores everything directly under data/ by default; un-ignore just the
+# folders that hold run records/plans/generated code so old test runs can be pulled on
+# another machine. data/processed/ and data/raw/ stay excluded (large, regenerable
+# corpus & index inputs) since they are not listed below.
+!data/code_scripts/
+!data/code_scripts/**
+!data/code_scripts_PAST/
+!data/code_scripts_PAST/**
+!data/config/
+!data/config/**
+!data/eval/
+!data/eval/**
+!data/human_outs/
+!data/human_outs/**
+!data/machine_outs/
+!data/machine_outs/**
+!data/plans/
+!data/plans/**
+
+# re-exclude a PyInstaller build left over in one old test run (compiled .exe, ~70MB,
+# not pipeline output -- an incidental artifact of manually poking at a generated file)
+data/code_scripts_PAST/stage3_mvp_test_20260910_20_21_52/build/
+data/code_scripts_PAST/stage3_mvp_test_20260910_20_21_52/dist/
+data/code_scripts_PAST/stage3_mvp_test_20260910_20_21_52/*.spec
+
+# keep bytecode caches excluded even under the un-ignored folders above
+**/__pycache__/
+*.pyc

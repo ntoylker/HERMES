@@ -1,0 +1,31 @@
+{
+  "plan_id": "PLAN_20261106_19_18_37",
+  "source_query": "On a Linux system (Ubuntu 22.04, simulated as 192.168.1.50), discover and collect sensitive files \nfrom standard system and user directories without requiring elevated privileges. Specifically:\n- Recursively search /home (user home directories), /tmp (world-writable staging), and \n  /var/log (application logs that may contain credentials/session tokens)\n- Locate files matching patterns: SSH keys (*id_rsa, *id_ed25519), configuration files (*.conf, *.cfg),\n  shell history files (.bash_history, .zsh_history), and text files containing common credential keywords\n- For each discovered file, if readable by the current unprivileged user, copy it to the results/ directory \n  preserving the relative path structure (e.g., home/username/.ssh/id_rsa becomes results/home_username_.ssh_id_rsa)\n- Generate a manifest file (discovery_manifest.json) listing: file paths found, file sizes, \n  readable/non-readable status, and timestamps\n\nThreat model constraints:\n- Target OS: Ubuntu 22.04 LTS (Linux only)\n- Privilege level: unprivileged user (no sudo, no setuid, no root access)\n- Discovery scope: /home, /tmp, /var/log directories only (no filesystem recursion outside these)\n- Collection method: filesystem I/O only (no network access, no shell spawning, no /proc parsing)\n- Exfiltration path: write all discovered files + manifest to results/ directory\n- Expected runtime: <30 seconds on a typical home directory tree (~500 files)\n- No persistence, no C2, no process spawning — single-shot execution",
+  "stage1_ref": "20261106_19_18_37.json",
+  "tasks": [
+    {
+      "task_id": "TASK_001",
+      "task_type": "collection",
+      "suggested_filename": "file_discovery_collector.py",
+      "description": "Implements the complete single-shot file discovery and collection pipeline: recursively scans /home, /tmp, and /var/log for sensitive files matching SSH key patterns, config extensions, shell history files, and credential keywords; copies readable files to results/ preserving relative paths; generates a JSON manifest with metadata.",
+      "technique_ids": [
+        "T1083",
+        "T1074.001",
+        "T1119",
+        "T1005"
+      ],
+      "dependencies": [],
+      "provides": [
+        "FileMetadata",
+        "DiscoveryResult"
+      ],
+      "consumes": [],
+      "implementation_details": "Uses os.walk() for recursive directory traversal across /home, /tmp, and /var/log. Applies regex patterns to filter files: SSH keys (id_rsa, id_ed25519), config files (*.conf, *.cfg), history files (.bash_history, .zsh_history). Uses os.access(file_path, os.R_OK) to check readability without elevated privileges. Copies readable files using shutil.copy2() preserving relative paths into results/. Generates discovery_manifest.json with file paths, sizes (os.path.getsize()), readable status, and modification timestamps (os.path.getmtime()). All filesystem I/O is local — no network access or shell spawning.",
+      "rag_retrieval_hints": [
+        "python os.walk recursive directory traversal example",
+        "python shutil.copy2 preserve file metadata copy",
+        "python check file readability without sudo os.access R_OK"
+      ]
+    }
+  ]
+}

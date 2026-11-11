@@ -1,0 +1,1 @@
+{"run_dir": "<repo>\\data\\code_scripts", "task_id": "TASK_001", "filename": "TASK_001_safe_file_archiver.py", "image": "hermes-tier1-base:latest", "outcome": "import_ok", "duration_s": 0.02475248100000016, "wall_time_s": 4.364442599995527, "timestamp": "2026-11-06T17:25:03.054255+00:00"}

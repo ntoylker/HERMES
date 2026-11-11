@@ -1,0 +1,224 @@
+{
+  "query": "On a Linux system (Ubuntu 22.04, simulated as 192.168.1.50), discover and collect sensitive files \nfrom standard system and user directories without requiring elevated privileges. Specifically:\n- Recursively search /home (user home directories), /tmp (world-writable staging), and \n  /var/log (application logs that may contain credentials/session tokens)\n- Locate files matching patterns: SSH keys (*id_rsa, *id_ed25519), configuration files (*.conf, *.cfg),\n  shell history files (.bash_history, .zsh_history), and text files containing common credential keywords\n- For each discovered file, if readable by the current unprivileged user, copy it to the results/ directory \n  preserving the relative path structure (e.g., home/username/.ssh/id_rsa becomes results/home_username_.ssh_id_rsa)\n- Generate a manifest file (discovery_manifest.json) listing: file paths found, file sizes, \n  readable/non-readable status, and timestamps\n\nThreat model constraints:\n- Target OS: Ubuntu 22.04 LTS (Linux only)\n- Privilege level: unprivileged user (no sudo, no setuid, no root access)\n- Discovery scope: /home, /tmp, /var/log directories only (no filesystem recursion outside these)\n- Collection method: filesystem I/O only (no network access, no shell spawning, no /proc parsing)\n- Exfiltration path: write all discovered files + manifest to results/ directory\n- Expected runtime: <30 seconds on a typical home directory tree (~500 files)\n- No persistence, no C2, no process spawning — single-shot execution",
+  "decomposition": {
+    "decomposed": false,
+    "sub_queries": [
+      {
+        "id": "Q1",
+        "text": "On a Linux system (Ubuntu 22.04, simulated as 192.168.1.50), discover and collect sensitive files \nfrom standard system and user directories without requiring elevated privileges. Specifically:\n- Recursively search /home (user home directories), /tmp (world-writable staging), and \n  /var/log (application logs that may contain credentials/session tokens)\n- Locate files matching patterns: SSH keys (*id_rsa, *id_ed25519), configuration files (*.conf, *.cfg),\n  shell history files (.bash_history, .zsh_history), and text files containing common credential keywords\n- For each discovered file, if readable by the current unprivileged user, copy it to the results/ directory \n  preserving the relative path structure (e.g., home/username/.ssh/id_rsa becomes results/home_username_.ssh_id_rsa)\n- Generate a manifest file (discovery_manifest.json) listing: file paths found, file sizes, \n  readable/non-readable status, and timestamps\n\nThreat model constraints:\n- Target OS: Ubuntu 22.04 LTS (Linux only)\n- Privilege level: unprivileged user (no sudo, no setuid, no root access)\n- Discovery scope: /home, /tmp, /var/log directories only (no filesystem recursion outside these)\n- Collection method: filesystem I/O only (no network access, no shell spawning, no /proc parsing)\n- Exfiltration path: write all discovered files + manifest to results/ directory\n- Expected runtime: <30 seconds on a typical home directory tree (~500 files)\n- No persistence, no C2, no process spawning — single-shot execution"
+      }
+    ],
+    "guardrails": {
+      "warnings": [],
+      "raw_decomposition_needed": null,
+      "fallback_used": true,
+      "fallback_reason": "Decomposition model did not return valid JSON"
+    }
+  },
+  "parts": [
+    {
+      "id": "Q1",
+      "text": "On a Linux system (Ubuntu 22.04, simulated as 192.168.1.50), discover and collect sensitive files \nfrom standard system and user directories without requiring elevated privileges. Specifically:\n- Recursively search /home (user home directories), /tmp (world-writable staging), and \n  /var/log (application logs that may contain credentials/session tokens)\n- Locate files matching patterns: SSH keys (*id_rsa, *id_ed25519), configuration files (*.conf, *.cfg),\n  shell history files (.bash_history, .zsh_history), and text files containing common credential keywords\n- For each discovered file, if readable by the current unprivileged user, copy it to the results/ directory \n  preserving the relative path structure (e.g., home/username/.ssh/id_rsa becomes results/home_username_.ssh_id_rsa)\n- Generate a manifest file (discovery_manifest.json) listing: file paths found, file sizes, \n  readable/non-readable status, and timestamps\n\nThreat model constraints:\n- Target OS: Ubuntu 22.04 LTS (Linux only)\n- Privilege level: unprivileged user (no sudo, no setuid, no root access)\n- Discovery scope: /home, /tmp, /var/log directories only (no filesystem recursion outside these)\n- Collection method: filesystem I/O only (no network access, no shell spawning, no /proc parsing)\n- Exfiltration path: write all discovered files + manifest to results/ directory\n- Expected runtime: <30 seconds on a typical home directory tree (~500 files)\n- No persistence, no C2, no process spawning — single-shot execution",
+      "retrieved_techniques": [
+        {
+          "mitre_id": "T1005",
+          "name": "Data from Local System",
+          "hybrid_score": 0.7258479475975037,
+          "vector_max": 0.6758479475975037,
+          "lexical_best": 1.0
+        },
+        {
+          "mitre_id": "T1552.001",
+          "name": "Credentials In Files",
+          "hybrid_score": 0.6774588823318481,
+          "vector_max": 0.6774588823318481,
+          "lexical_best": 0.0
+        },
+        {
+          "mitre_id": "T1083",
+          "name": "File and Directory Discovery",
+          "hybrid_score": 0.6737300200895829,
+          "vector_max": 0.6691845655441284,
+          "lexical_best": 0.09090909090909091
+        },
+        {
+          "mitre_id": "T1552.003",
+          "name": "Shell History",
+          "hybrid_score": 0.6678151488304138,
+          "vector_max": 0.6678151488304138,
+          "lexical_best": 0.0
+        },
+        {
+          "mitre_id": "T1680",
+          "name": "Local Storage Discovery",
+          "hybrid_score": 0.6532164812088013,
+          "vector_max": 0.6532164812088013,
+          "lexical_best": 0.0
+        },
+        {
+          "mitre_id": "T1119",
+          "name": "Automated Collection",
+          "hybrid_score": 0.652054056754479,
+          "vector_max": 0.6482079029083252,
+          "lexical_best": 0.07692307692307693
+        },
+        {
+          "mitre_id": "T1552.004",
+          "name": "Private Keys",
+          "hybrid_score": 0.6498403549194336,
+          "vector_max": 0.6498403549194336,
+          "lexical_best": 0.0
+        },
+        {
+          "mitre_id": "T1074.001",
+          "name": "Local Data Staging",
+          "hybrid_score": 0.6466887593269348,
+          "vector_max": 0.6466887593269348,
+          "lexical_best": 0.0
+        }
+      ],
+      "top_techniques": [
+        {
+          "mitre_id": "T1005",
+          "name": "Data from Local System",
+          "rationale": "The core activity is searching the local file system in directories like /home, /tmp, and /var/log to find and collect sensitive data and files of interest, which is the primary definition of this technique.",
+          "citations": [
+            "S1",
+            "S2"
+          ]
+        },
+        {
+          "mitre_id": "T1083",
+          "name": "File and Directory Discovery",
+          "rationale": "The process involves recursively searching specific directories (/home, /tmp, /var/log) to enumerate files and directories that match certain patterns. This enumeration is a prerequisite for collecting the data.",
+          "citations": [
+            "S7",
+            "S9"
+          ]
+        },
+        {
+          "mitre_id": "T1119",
+          "name": "Automated Collection",
+          "rationale": "The query describes a single-shot, scripted process that automatically searches for files based on set criteria (patterns, locations), collects them, and generates a manifest. This aligns with using automated techniques for collecting internal data.",
+          "citations": [
+            "S14"
+          ]
+        },
+        {
+          "mitre_id": "T1074.001",
+          "name": "Local Data Staging",
+          "rationale": "The query explicitly states that all discovered files and a manifest are to be copied to a central `results/` directory on the local system. This action of collecting data in a specific location before potential exfiltration is known as local data staging.",
+          "citations": [
+            "S18",
+            "S19"
+          ]
+        }
+      ],
+      "alternatives": [
+        {
+          "mitre_id": "T1552.001",
+          "name": "Credentials In Files",
+          "rationale": "The query specifies searching for configuration files (*.conf, *.cfg) and text files containing credential keywords. This is a direct attempt to find insecurely stored credentials within files on the local system.",
+          "citations": [
+            "S4",
+            "S6"
+          ]
+        },
+        {
+          "mitre_id": "T1552.003",
+          "name": "Shell History",
+          "rationale": "The script is explicitly configured to locate and collect shell history files such as `.bash_history` and `.zsh_history`. Adversaries search these files for credentials that may have been typed on the command line.",
+          "citations": [
+            "S10",
+            "S12"
+          ]
+        },
+        {
+          "mitre_id": "T1552.004",
+          "name": "Private Keys",
+          "rationale": "The search patterns explicitly include SSH private key files like `*id_rsa` and `*id_ed25519`. This indicates a specific intent to find and collect private cryptographic keys used for authentication.",
+          "citations": [
+            "S16",
+            "S17"
+          ]
+        }
+      ],
+      "summary": "The user describes an automated script designed to perform discovery and collection on a Linux system. The script first enumerates files and directories within `/home`, `/tmp`, and `/var/log` (T1083). It specifically targets sensitive information such as credentials in configuration files (T1552.001), shell history files (T1552.003), and private SSH keys (T1552.004). This entire process of searching for and gathering data from the local file system is a form of Data from Local System (T1005). The automated nature of the search and copy operation constitutes Automated Collection (T1119). Finally, the collected files are copied into a central `results/` directory, which is an example of Local Data Staging (T1074.001).",
+      "citation_validation": {
+        "dropped": [],
+        "warnings": []
+      }
+    }
+  ],
+  "top_techniques": [
+    {
+      "mitre_id": "T1005",
+      "name": "Data from Local System",
+      "rationale": "The core activity is searching the local file system in directories like /home, /tmp, and /var/log to find and collect sensitive data and files of interest, which is the primary definition of this technique.",
+      "citations": [
+        "S1",
+        "S2"
+      ]
+    },
+    {
+      "mitre_id": "T1083",
+      "name": "File and Directory Discovery",
+      "rationale": "The process involves recursively searching specific directories (/home, /tmp, /var/log) to enumerate files and directories that match certain patterns. This enumeration is a prerequisite for collecting the data.",
+      "citations": [
+        "S7",
+        "S9"
+      ]
+    },
+    {
+      "mitre_id": "T1119",
+      "name": "Automated Collection",
+      "rationale": "The query describes a single-shot, scripted process that automatically searches for files based on set criteria (patterns, locations), collects them, and generates a manifest. This aligns with using automated techniques for collecting internal data.",
+      "citations": [
+        "S14"
+      ]
+    },
+    {
+      "mitre_id": "T1074.001",
+      "name": "Local Data Staging",
+      "rationale": "The query explicitly states that all discovered files and a manifest are to be copied to a central `results/` directory on the local system. This action of collecting data in a specific location before potential exfiltration is known as local data staging.",
+      "citations": [
+        "S18",
+        "S19"
+      ]
+    }
+  ],
+  "alternatives": [
+    {
+      "mitre_id": "T1552.001",
+      "name": "Credentials In Files",
+      "rationale": "The query specifies searching for configuration files (*.conf, *.cfg) and text files containing credential keywords. This is a direct attempt to find insecurely stored credentials within files on the local system.",
+      "citations": [
+        "S4",
+        "S6"
+      ]
+    },
+    {
+      "mitre_id": "T1552.003",
+      "name": "Shell History",
+      "rationale": "The script is explicitly configured to locate and collect shell history files such as `.bash_history` and `.zsh_history`. Adversaries search these files for credentials that may have been typed on the command line.",
+      "citations": [
+        "S10",
+        "S12"
+      ]
+    },
+    {
+      "mitre_id": "T1552.004",
+      "name": "Private Keys",
+      "rationale": "The search patterns explicitly include SSH private key files like `*id_rsa` and `*id_ed25519`. This indicates a specific intent to find and collect private cryptographic keys used for authentication.",
+      "citations": [
+        "S16",
+        "S17"
+      ]
+    }
+  ],
+  "summary": "The user describes an automated script designed to perform discovery and collection on a Linux system. The script first enumerates files and directories within `/home`, `/tmp`, and `/var/log` (T1083). It specifically targets sensitive information such as credentials in configuration files (T1552.001), shell history files (T1552.003), and private SSH keys (T1552.004). This entire process of searching for and gathering data from the local file system is a form of Data from Local System (T1005). The automated nature of the search and copy operation constitutes Automated Collection (T1119). Finally, the collected files are copied into a central `results/` directory, which is an example of Local Data Staging (T1074.001).",
+  "citation_validation": {
+    "dropped": [],
+    "warnings": []
+  }
+}

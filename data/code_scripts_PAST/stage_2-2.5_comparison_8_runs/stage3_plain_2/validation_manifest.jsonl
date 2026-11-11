@@ -1,0 +1,2 @@
+{"run_dir": "data\\code_scripts\\stage3_plain_2", "task_id": "TASK_001", "filename": "TASK_001_models.py", "verdict": "pass", "findings": [], "missing_dependencies": [], "timestamp": "2026-11-04T14:15:09.137138+00:00"}
+{"run_dir": "data\\code_scripts\\stage3_plain_2", "task_id": "TASK_003", "filename": "TASK_003_windows_reverse_shell.py", "verdict": "pass", "findings": [], "missing_dependencies": [], "timestamp": "2026-11-04T14:15:09.157984+00:00"}

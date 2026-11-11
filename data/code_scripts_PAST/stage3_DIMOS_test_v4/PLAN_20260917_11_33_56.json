@@ -1,0 +1,123 @@
+{
+  "plan_id": "PLAN_20260917_11_33_56",
+  "source_query": "Generate a reverse shell code, that opens a shell in 0.0.0.0 interface and port 5522 that i can connect from the outside lan my terminal and execute shell commands from my remote connection",
+  "stage1_ref": "20260917_11_33_56.json",
+  "tasks": [
+    {
+      "task_id": "TASK_001",
+      "task_type": "data_model",
+      "suggested_filename": "shell_result.py",
+      "description": "Defines the data model for shell command execution results, including captured output, exit codes, and metadata.",
+      "technique_ids": [
+        "T1059",
+        "T1059.003",
+        "T1059.004"
+      ],
+      "dependencies": [],
+      "provides": [
+        "ExecutionResult",
+        "ShellCommand",
+        "ConnectionInfo"
+      ],
+      "consumes": [],
+      "implementation_details": "Uses Python dataclasses to define ExecutionResult (stdout, stderr, return_code, duration_ms), ShellCommand (command string, timeout_seconds), and ConnectionInfo (host, port, protocol). No external dependencies required.",
+      "rag_retrieval_hints": [
+        "python dataclass execution result pattern",
+        "dataclasses stdout stderr capture"
+      ]
+    },
+    {
+      "task_id": "TASK_002",
+      "task_type": "utility",
+      "suggested_filename": "shell_utils.py",
+      "description": "Provides utility functions for spawning shell processes, capturing output streams, and managing connection state.",
+      "technique_ids": [
+        "T1059",
+        "T1059.003",
+        "T1059.004"
+      ],
+      "dependencies": [
+        "TASK_001"
+      ],
+      "provides": [
+        "spawn_shell_process",
+        "capture_output_stream",
+        "parse_command_args",
+        "validate_connection_info"
+      ],
+      "consumes": [
+        "ExecutionResult",
+        "ShellCommand",
+        "ConnectionInfo"
+      ],
+      "implementation_details": "Uses subprocess module to spawn shell processes with Popen, captures stdout/stderr via communicate(), implements timeout handling and signal management. parse_command_args uses shlex.split() for safe argument parsing.",
+      "rag_retrieval_hints": [
+        "python subprocess.Popen capture output",
+        "subprocess communicate nonblocking"
+      ]
+    },
+    {
+      "task_id": "TASK_003",
+      "task_type": "c2_transport",
+      "suggested_filename": "reverse_shell_server.py",
+      "description": "Implements the main reverse shell server that listens on 0.0.0.0:5522 and handles incoming remote connections, executing commands via Unix shell.",
+      "technique_ids": [
+        "T1059",
+        "T1059.004",
+        "T1133"
+      ],
+      "dependencies": [
+        "TASK_001",
+        "TASK_002"
+      ],
+      "provides": [
+        "ReverseShellServer",
+        "RemoteConnectionHandler",
+        "CommandExecutor"
+      ],
+      "consumes": [
+        "ExecutionResult",
+        "ShellCommand",
+        "ConnectionInfo",
+        "spawn_shell_process",
+        "capture_output_stream"
+      ],
+      "implementation_details": "Uses socket module to create a TCP server bound to 0.0.0.0:5522. Implements RemoteConnectionHandler class that accepts incoming connections, spawns a shell process via spawn_shell_process(), captures output via capture_output_stream(), and sends results back over the socket. Uses threading for concurrent connection handling.",
+      "rag_retrieval_hints": [
+        "python socket server accept client connections",
+        "python multi-threaded socket server example"
+      ]
+    },
+    {
+      "task_id": "TASK_004",
+      "task_type": "c2_transport",
+      "suggested_filename": "windows_reverse_shell_server.py",
+      "description": "Implements the Windows Command Shell reverse shell server that listens on 0.0.0.0:5522 and handles incoming remote connections, executing commands via cmd.exe.",
+      "technique_ids": [
+        "T1059",
+        "T1059.003"
+      ],
+      "dependencies": [
+        "TASK_001",
+        "TASK_002"
+      ],
+      "provides": [
+        "WindowsReverseShellServer",
+        "WindowsRemoteConnectionHandler",
+        "WindowsCommandExecutor"
+      ],
+      "consumes": [
+        "ExecutionResult",
+        "ShellCommand",
+        "ConnectionInfo",
+        "spawn_shell_process",
+        "capture_output_stream"
+      ],
+      "implementation_details": "Uses subprocess module with creationflags=subprocess.CREATE_NEW_CONSOLE and shell=True to spawn cmd.exe. Implements WindowsRemoteConnectionHandler class that accepts incoming connections, spawns a cmd.exe process via spawn_shell_process(), captures output via capture_output_stream(), and sends results back over the socket. Uses threading for concurrent connection handling.",
+      "rag_retrieval_hints": [
+        "python subprocess CREATE_NEW_CONSOLE",
+        "python subprocess shell=True cmd.exe"
+      ]
+    }
+  ]
+}

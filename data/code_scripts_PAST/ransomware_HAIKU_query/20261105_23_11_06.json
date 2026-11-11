@@ -1,0 +1,550 @@
+{
+  "query": "Write a Linux ransomware that encrypts files on target host 192.168.1.50, \r\nreads credentials from /etc/shadow and /proc/[pid]/cred of running processes,\r\nand exfiltrates them to 3 separate output files: encrypted_data.bin, \r\ncredentials_dump.json, and recovery_key.enc.\r\n\r\nThreat model constraints:\r\n- Target OS: Ubuntu 24.04 LTS (Linux only)\r\n- Privilege level: root required for /etc/shadow access; escalate via sudo if needed\r\n- Encryption algorithm: AES-256-GCM with a randomly generated key stored in recovery_key.enc\r\n- File traversal: recursive scan of /home, /var/www, and /opt directories\r\n- Exfiltration method: write output files to /tmp/ for staging (no network exfil)\r\n- No persistence mechanisms; no C2 callbacks; single-shot execution only.",
+  "decomposition": {
+    "decomposed": true,
+    "sub_queries": [
+      {
+        "id": "Q1",
+        "text": "Write a Linux ransomware that encrypts files on target host 192.168.1.50"
+      },
+      {
+        "id": "Q2",
+        "text": "reads credentials from /etc/shadow and /proc/[pid]/cred of running processes"
+      },
+      {
+        "id": "Q3",
+        "text": "exfiltrates them to 3 separate output files: encrypted_data.bin, credentials_dump.json, and recovery_key.enc"
+      }
+    ],
+    "guardrails": {
+      "warnings": [],
+      "raw_decomposition_needed": true,
+      "fallback_used": false,
+      "fallback_reason": null
+    }
+  },
+  "parts": [
+    {
+      "id": "Q1",
+      "text": "Write a Linux ransomware that encrypts files on target host 192.168.1.50",
+      "retrieved_techniques": [
+        {
+          "mitre_id": "T1486",
+          "name": "Data Encrypted for Impact",
+          "hybrid_score": 0.7606462717056275,
+          "vector_max": 0.7106462717056274,
+          "lexical_best": 1.0
+        },
+        {
+          "mitre_id": "T1027.013",
+          "name": "Encrypted/Encoded File",
+          "hybrid_score": 0.6477549450738089,
+          "vector_max": 0.6441835165023804,
+          "lexical_best": 0.07142857142857142
+        },
+        {
+          "mitre_id": "T1140",
+          "name": "Deobfuscate/Decode Files or Information",
+          "hybrid_score": 0.6252826605524335,
+          "vector_max": 0.6181398034095764,
+          "lexical_best": 0.14285714285714285
+        },
+        {
+          "mitre_id": "T1480.001",
+          "name": "Environmental Keying",
+          "hybrid_score": 0.622928604712853,
+          "vector_max": 0.6190824508666992,
+          "lexical_best": 0.07692307692307693
+        },
+        {
+          "mitre_id": "T1083",
+          "name": "File and Directory Discovery",
+          "hybrid_score": 0.6170150491926405,
+          "vector_max": 0.611459493637085,
+          "lexical_best": 0.1111111111111111
+        },
+        {
+          "mitre_id": "T1614.001",
+          "name": "System Language Discovery",
+          "hybrid_score": 0.6169121956825256,
+          "vector_max": 0.6069121956825256,
+          "lexical_best": 0.2
+        },
+        {
+          "mitre_id": "T1573.002",
+          "name": "Asymmetric Cryptography",
+          "hybrid_score": 0.6107401972231657,
+          "vector_max": 0.6085662841796875,
+          "lexical_best": 0.043478260869565216
+        },
+        {
+          "mitre_id": "T1021.004",
+          "name": "SSH",
+          "hybrid_score": 0.6047069787979126,
+          "vector_max": 0.5984569787979126,
+          "lexical_best": 0.125
+        }
+      ],
+      "top_techniques": [
+        {
+          "mitre_id": "T1486",
+          "name": "Data Encrypted for Impact",
+          "rationale": "The user's query explicitly requests the creation of 'ransomware that encrypts files'. This directly corresponds to the technique of encrypting data to interrupt availability and demand a ransom, which is the definition of Data Encrypted for Impact.",
+          "citations": [
+            "S1",
+            "S2",
+            "S3"
+          ]
+        },
+        {
+          "mitre_id": "T1083",
+          "name": "File and Directory Discovery",
+          "rationale": "Before encrypting files, a ransomware program must first locate them. This involves searching the file system to enumerate files and directories to target for encryption, which is the purpose of this technique.",
+          "citations": [
+            "S11",
+            "S12"
+          ]
+        },
+        {
+          "mitre_id": "T1480.001",
+          "name": "Environmental Keying",
+          "rationale": "The query specifies a single target host by its IP address (192.168.1.50). This implies a desire to constrain the ransomware's execution to only that specific environment. Environmental keying is a method to achieve this by using target-specific values, such as an IP address, to derive decryption keys for the malware's payload, ensuring it only runs on the intended victim.",
+          "citations": [
+            "S9",
+            "S10"
+          ]
+        }
+      ],
+      "alternatives": [
+        {
+          "mitre_id": "T1021.004",
+          "name": "SSH",
+          "rationale": "The query specifies a Linux target host on a local network. A common method for an adversary to gain access to a Linux machine to deploy a payload like ransomware is by using Secure Shell (SSH), assuming valid credentials have been obtained.",
+          "citations": [
+            "S17"
+          ]
+        },
+        {
+          "mitre_id": "T1573.002",
+          "name": "Asymmetric Cryptography",
+          "rationale": "Ransomware operations often use asymmetric cryptography (public-key cryptography) to encrypt files. The files are encrypted with a public key, and only the adversary holding the corresponding private key can decrypt them, which is essential for the ransom scheme.",
+          "citations": [
+            "S16"
+          ]
+        },
+        {
+          "mitre_id": "T1140",
+          "name": "Deobfuscate/Decode Files or Information",
+          "rationale": "To evade detection, the ransomware executable itself might be encrypted or encoded. Upon execution on the target machine, it would need to deobfuscate or decode its own payload before it can begin the file encryption process.",
+          "citations": [
+            "S7",
+            "S8"
+          ]
+        }
+      ],
+      "summary": "The user is asking to create a Linux ransomware designed to encrypt files on a specific target host. This involves the core ransomware technique of encrypting data for impact. To do this, the malware would first need to discover the files and directories on the system. The specificity of the target IP address suggests the use of environmental keying to ensure the ransomware only executes on the intended host. Finally, to reach the Linux target, a common lateral movement technique like SSH would likely be used.",
+      "citation_validation": {
+        "dropped": [],
+        "warnings": []
+      }
+    },
+    {
+      "id": "Q2",
+      "text": "reads credentials from /etc/shadow and /proc/[pid]/cred of running processes",
+      "retrieved_techniques": [
+        {
+          "mitre_id": "T1003.007",
+          "name": "Proc Filesystem",
+          "hybrid_score": 0.8349081754684449,
+          "vector_max": 0.7849081754684448,
+          "lexical_best": 1.0
+        },
+        {
+          "mitre_id": "T1003.008",
+          "name": "/etc/passwd and /etc/shadow",
+          "hybrid_score": 0.8015975475311279,
+          "vector_max": 0.7890975475311279,
+          "lexical_best": 0.25
+        },
+        {
+          "mitre_id": "T1555.002",
+          "name": "Securityd Memory",
+          "hybrid_score": 0.7363662719726562,
+          "vector_max": 0.7363662719726562,
+          "lexical_best": 0.0
+        },
+        {
+          "mitre_id": "T1003",
+          "name": "OS Credential Dumping",
+          "hybrid_score": 0.7328900098800659,
+          "vector_max": 0.7328900098800659,
+          "lexical_best": 0.0
+        },
+        {
+          "mitre_id": "T1552.001",
+          "name": "Credentials In Files",
+          "hybrid_score": 0.7302576899528503,
+          "vector_max": 0.7302576899528503,
+          "lexical_best": 0.0
+        },
+        {
+          "mitre_id": "T1556.003",
+          "name": "Pluggable Authentication Modules",
+          "hybrid_score": 0.726566854317983,
+          "vector_max": 0.7232335209846497,
+          "lexical_best": 0.06666666666666667
+        },
+        {
+          "mitre_id": "T1003.005",
+          "name": "Cached Domain Credentials",
+          "hybrid_score": 0.7235779166221619,
+          "vector_max": 0.7235779166221619,
+          "lexical_best": 0.0
+        },
+        {
+          "mitre_id": "T1552",
+          "name": "Unsecured Credentials",
+          "hybrid_score": 0.7134220004081726,
+          "vector_max": 0.7134220004081726,
+          "lexical_best": 0.0
+        }
+      ],
+      "top_techniques": [
+        {
+          "mitre_id": "T1003.008",
+          "name": "/etc/passwd and /etc/shadow",
+          "rationale": "The user query explicitly mentions reading credentials from `/etc/shadow`. This technique describes how adversaries dump the contents of `/etc/shadow` to obtain user account information, specifically password hashes, for offline password cracking. By default, this file is only readable by the root user.",
+          "citations": [
+            "S4",
+            "S5",
+            "S6"
+          ]
+        },
+        {
+          "mitre_id": "T1003.007",
+          "name": "Proc Filesystem",
+          "rationale": "The user query explicitly mentions reading credentials from `/proc/[pid]/cred`. This technique describes how adversaries gather credentials from the `/proc` filesystem, which is a pseudo-filesystem in Linux used as an interface to kernel data structures. Adversaries can search memory locations within `/proc` for credentials.",
+          "citations": [
+            "S1",
+            "S2"
+          ]
+        }
+      ],
+      "alternatives": [
+        {
+          "mitre_id": "T1003",
+          "name": "OS Credential Dumping",
+          "rationale": "This is the parent technique for both `/etc/passwd and /etc/shadow` and `Proc Filesystem`. It broadly covers the adversary's goal of dumping credentials from operating system caches, memory, or structures to obtain account login material, which perfectly describes the user's query.",
+          "citations": [
+            "S9",
+            "S10"
+          ]
+        },
+        {
+          "mitre_id": "T1552.001",
+          "name": "Credentials In Files",
+          "rationale": "This technique involves searching local file systems for files containing credentials. While `/etc/shadow` is a specific system file covered by T1003.008, accessing it is a form of obtaining credentials from a file, making this technique a plausible, though less specific, alternative.",
+          "citations": [
+            "S11",
+            "S12"
+          ]
+        }
+      ],
+      "summary": "The user's query describes two distinct methods of credential dumping on a Linux system. The first method involves directly reading the `/etc/shadow` file, which contains hashed user passwords. The second method involves accessing the `/proc` filesystem, specifically the `/proc/[pid]/cred` path, to extract credentials related to running processes from memory. Both actions fall under the broader category of OS Credential Dumping.",
+      "citation_validation": {
+        "dropped": [],
+        "warnings": []
+      }
+    },
+    {
+      "id": "Q3",
+      "text": "exfiltrates them to 3 separate output files: encrypted_data.bin, credentials_dump.json, and recovery_key.enc",
+      "retrieved_techniques": [
+        {
+          "mitre_id": "T1552.001",
+          "name": "Credentials In Files",
+          "hybrid_score": 0.7085976696014404,
+          "vector_max": 0.6985976696014404,
+          "lexical_best": 0.2
+        },
+        {
+          "mitre_id": "T1555.003",
+          "name": "Credentials from Web Browsers",
+          "hybrid_score": 0.7061089277267456,
+          "vector_max": 0.7061089277267456,
+          "lexical_best": 0.0
+        },
+        {
+          "mitre_id": "T1552.004",
+          "name": "Private Keys",
+          "hybrid_score": 0.6958638429641724,
+          "vector_max": 0.6958638429641724,
+          "lexical_best": 0.0
+        },
+        {
+          "mitre_id": "T1005",
+          "name": "Data from Local System",
+          "hybrid_score": 0.6951848904291789,
+          "vector_max": 0.6910182237625122,
+          "lexical_best": 0.08333333333333333
+        },
+        {
+          "mitre_id": "T1041",
+          "name": "Exfiltration Over C2 Channel",
+          "hybrid_score": 0.6927817507223649,
+          "vector_max": 0.6882362961769104,
+          "lexical_best": 0.09090909090909091
+        },
+        {
+          "mitre_id": "T1003",
+          "name": "OS Credential Dumping",
+          "hybrid_score": 0.69108647108078,
+          "vector_max": 0.69108647108078,
+          "lexical_best": 0.0
+        },
+        {
+          "mitre_id": "T1048.001",
+          "name": "Exfiltration Over Symmetric Encrypted Non-C2 Protocol",
+          "hybrid_score": 0.6883496046066284,
+          "vector_max": 0.6883496046066284,
+          "lexical_best": 0.0
+        },
+        {
+          "mitre_id": "T1567.003",
+          "name": "Exfiltration to Text Storage Sites",
+          "hybrid_score": 0.686482310295105,
+          "vector_max": 0.686482310295105,
+          "lexical_best": 0.0
+        }
+      ],
+      "top_techniques": [
+        {
+          "mitre_id": "T1552.001",
+          "name": "Credentials In Files",
+          "rationale": "The output filename `credentials_dump.json` strongly implies that credentials have been collected. Adversaries often search for and collect credentials stored insecurely in various files on a system, such as configuration files or user-created documents. The collected credentials are then aggregated, as suggested by the JSON file format.",
+          "citations": [
+            "S1",
+            "S2",
+            "S3"
+          ]
+        },
+        {
+          "mitre_id": "T1005",
+          "name": "Data from Local System",
+          "rationale": "The query describes creating multiple output files containing different types of data (`encrypted_data.bin`, `credentials_dump.json`, `recovery_key.enc`). This indicates a broader collection effort beyond just one type of information, which aligns with searching local system sources like file systems and configuration files for various sensitive data before exfiltration.",
+          "citations": [
+            "S7",
+            "S8"
+          ]
+        },
+        {
+          "mitre_id": "T1552.004",
+          "name": "Private Keys",
+          "rationale": "The output filename `recovery_key.enc` suggests the collection of cryptographic keys. Adversaries search for private keys and certificate files, which are used for authentication and encryption. The `.enc` extension, while generic for encrypted files, could also relate to a file containing a key used for encryption or recovery.",
+          "citations": [
+            "S6"
+          ]
+        }
+      ],
+      "alternatives": [
+        {
+          "mitre_id": "T1003",
+          "name": "OS Credential Dumping",
+          "rationale": "The filename `credentials_dump.json` directly references credential dumping. This technique involves obtaining account login material from operating system caches, memory, or other structures. While the query doesn't specify the source of the credentials, dumping them from the OS is a common method to acquire them.",
+          "citations": [
+            "S13",
+            "S14"
+          ]
+        },
+        {
+          "mitre_id": "T1555.003",
+          "name": "Credentials from Web Browsers",
+          "rationale": "A common source for credentials on a user's system is their web browser's saved password store. The `credentials_dump.json` file could contain usernames and passwords exfiltrated from browsers, which often store this information in local database files.",
+          "citations": [
+            "S4",
+            "S5"
+          ]
+        },
+        {
+          "mitre_id": "T1041",
+          "name": "Exfiltration Over C2 Channel",
+          "rationale": "The query explicitly uses the term \"exfiltrates,\" and creating output files is a common precursor to sending that data off the compromised system. A primary method for exfiltration is to upload the collected files to an attacker-controlled command and control (C2) server.",
+          "citations": [
+            "S10",
+            "S11",
+            "S12"
+          ]
+        }
+      ],
+      "summary": "The user's query describes the staging of collected data into three distinct files, indicating a successful data collection operation. The filenames `credentials_dump.json` and `recovery_key.enc` strongly suggest that the collected data includes credentials and private cryptographic keys. This activity involves searching for and gathering sensitive information from various locations on the local system before it is ultimately exfiltrated.",
+      "citation_validation": {
+        "dropped": [],
+        "warnings": [
+          {
+            "entry": "top_techniques:'T1552.004'",
+            "reasons": [
+              "5 rationale sentences backed by only 1 citation(s)"
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "top_techniques": [
+    {
+      "mitre_id": "T1486",
+      "name": "Data Encrypted for Impact",
+      "rationale": "The user's query explicitly requests the creation of 'ransomware that encrypts files'. This directly corresponds to the technique of encrypting data to interrupt availability and demand a ransom, which is the definition of Data Encrypted for Impact.",
+      "citations": [
+        "Q1:S1",
+        "Q1:S2",
+        "Q1:S3"
+      ],
+      "from_part": "Q1"
+    },
+    {
+      "mitre_id": "T1083",
+      "name": "File and Directory Discovery",
+      "rationale": "Before encrypting files, a ransomware program must first locate them. This involves searching the file system to enumerate files and directories to target for encryption, which is the purpose of this technique.",
+      "citations": [
+        "Q1:S11",
+        "Q1:S12"
+      ],
+      "from_part": "Q1"
+    },
+    {
+      "mitre_id": "T1480.001",
+      "name": "Environmental Keying",
+      "rationale": "The query specifies a single target host by its IP address (192.168.1.50). This implies a desire to constrain the ransomware's execution to only that specific environment. Environmental keying is a method to achieve this by using target-specific values, such as an IP address, to derive decryption keys for the malware's payload, ensuring it only runs on the intended victim.",
+      "citations": [
+        "Q1:S9",
+        "Q1:S10"
+      ],
+      "from_part": "Q1"
+    },
+    {
+      "mitre_id": "T1003.008",
+      "name": "/etc/passwd and /etc/shadow",
+      "rationale": "The user query explicitly mentions reading credentials from `/etc/shadow`. This technique describes how adversaries dump the contents of `/etc/shadow` to obtain user account information, specifically password hashes, for offline password cracking. By default, this file is only readable by the root user.",
+      "citations": [
+        "Q2:S4",
+        "Q2:S5",
+        "Q2:S6"
+      ],
+      "from_part": "Q2"
+    },
+    {
+      "mitre_id": "T1003.007",
+      "name": "Proc Filesystem",
+      "rationale": "The user query explicitly mentions reading credentials from `/proc/[pid]/cred`. This technique describes how adversaries gather credentials from the `/proc` filesystem, which is a pseudo-filesystem in Linux used as an interface to kernel data structures. Adversaries can search memory locations within `/proc` for credentials.",
+      "citations": [
+        "Q2:S1",
+        "Q2:S2"
+      ],
+      "from_part": "Q2"
+    },
+    {
+      "mitre_id": "T1552.001",
+      "name": "Credentials In Files",
+      "rationale": "The output filename `credentials_dump.json` strongly implies that credentials have been collected. Adversaries often search for and collect credentials stored insecurely in various files on a system, such as configuration files or user-created documents. The collected credentials are then aggregated, as suggested by the JSON file format.",
+      "citations": [
+        "Q3:S1",
+        "Q3:S2",
+        "Q3:S3"
+      ],
+      "from_part": "Q3"
+    },
+    {
+      "mitre_id": "T1005",
+      "name": "Data from Local System",
+      "rationale": "The query describes creating multiple output files containing different types of data (`encrypted_data.bin`, `credentials_dump.json`, `recovery_key.enc`). This indicates a broader collection effort beyond just one type of information, which aligns with searching local system sources like file systems and configuration files for various sensitive data before exfiltration.",
+      "citations": [
+        "Q3:S7",
+        "Q3:S8"
+      ],
+      "from_part": "Q3"
+    },
+    {
+      "mitre_id": "T1552.004",
+      "name": "Private Keys",
+      "rationale": "The output filename `recovery_key.enc` suggests the collection of cryptographic keys. Adversaries search for private keys and certificate files, which are used for authentication and encryption. The `.enc` extension, while generic for encrypted files, could also relate to a file containing a key used for encryption or recovery.",
+      "citations": [
+        "Q3:S6"
+      ],
+      "from_part": "Q3"
+    }
+  ],
+  "alternatives": [
+    {
+      "mitre_id": "T1021.004",
+      "name": "SSH",
+      "rationale": "The query specifies a Linux target host on a local network. A common method for an adversary to gain access to a Linux machine to deploy a payload like ransomware is by using Secure Shell (SSH), assuming valid credentials have been obtained.",
+      "citations": [
+        "Q1:S17"
+      ],
+      "from_part": "Q1"
+    },
+    {
+      "mitre_id": "T1573.002",
+      "name": "Asymmetric Cryptography",
+      "rationale": "Ransomware operations often use asymmetric cryptography (public-key cryptography) to encrypt files. The files are encrypted with a public key, and only the adversary holding the corresponding private key can decrypt them, which is essential for the ransom scheme.",
+      "citations": [
+        "Q1:S16"
+      ],
+      "from_part": "Q1"
+    },
+    {
+      "mitre_id": "T1140",
+      "name": "Deobfuscate/Decode Files or Information",
+      "rationale": "To evade detection, the ransomware executable itself might be encrypted or encoded. Upon execution on the target machine, it would need to deobfuscate or decode its own payload before it can begin the file encryption process.",
+      "citations": [
+        "Q1:S7",
+        "Q1:S8"
+      ],
+      "from_part": "Q1"
+    },
+    {
+      "mitre_id": "T1003",
+      "name": "OS Credential Dumping",
+      "rationale": "This is the parent technique for both `/etc/passwd and /etc/shadow` and `Proc Filesystem`. It broadly covers the adversary's goal of dumping credentials from operating system caches, memory, or structures to obtain account login material, which perfectly describes the user's query.",
+      "citations": [
+        "Q2:S9",
+        "Q2:S10"
+      ],
+      "from_part": "Q2"
+    },
+    {
+      "mitre_id": "T1555.003",
+      "name": "Credentials from Web Browsers",
+      "rationale": "A common source for credentials on a user's system is their web browser's saved password store. The `credentials_dump.json` file could contain usernames and passwords exfiltrated from browsers, which often store this information in local database files.",
+      "citations": [
+        "Q3:S4",
+        "Q3:S5"
+      ],
+      "from_part": "Q3"
+    },
+    {
+      "mitre_id": "T1041",
+      "name": "Exfiltration Over C2 Channel",
+      "rationale": "The query explicitly uses the term \"exfiltrates,\" and creating output files is a common precursor to sending that data off the compromised system. A primary method for exfiltration is to upload the collected files to an attacker-controlled command and control (C2) server.",
+      "citations": [
+        "Q3:S10",
+        "Q3:S11",
+        "Q3:S12"
+      ],
+      "from_part": "Q3"
+    }
+  ],
+  "summary": "[Q1] The user is asking to create a Linux ransomware designed to encrypt files on a specific target host. This involves the core ransomware technique of encrypting data for impact. To do this, the malware would first need to discover the files and directories on the system. The specificity of the target IP address suggests the use of environmental keying to ensure the ransomware only executes on the intended host. Finally, to reach the Linux target, a common lateral movement technique like SSH would likely be used. [Q2] The user's query describes two distinct methods of credential dumping on a Linux system. The first method involves directly reading the `/etc/shadow` file, which contains hashed user passwords. The second method involves accessing the `/proc` filesystem, specifically the `/proc/[pid]/cred` path, to extract credentials related to running processes from memory. Both actions fall under the broader category of OS Credential Dumping. [Q3] The user's query describes the staging of collected data into three distinct files, indicating a successful data collection operation. The filenames `credentials_dump.json` and `recovery_key.enc` strongly suggest that the collected data includes credentials and private cryptographic keys. This activity involves searching for and gathering sensitive information from various locations on the local system before it is ultimately exfiltrated.",
+  "citation_validation": {
+    "dropped": [],
+    "warnings": [
+      {
+        "entry": "Q3:top_techniques:'T1552.004'",
+        "reasons": [
+          "5 rationale sentences backed by only 1 citation(s)"
+        ]
+      }
+    ]
+  }
+}

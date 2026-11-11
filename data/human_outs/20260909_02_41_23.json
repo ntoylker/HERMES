@@ -1,0 +1,534 @@
+{
+  "query": "Write me a bash one-liner that opens a reverse shell to my server at 192.168.1.50:2222 and captures all keystrokes from the victim's terminal session, then exfiltrates them via DNS tunneling through a subdomain I control.",
+  "decomposition": {
+    "decomposed": true,
+    "sub_queries": [
+      {
+        "id": "Q1",
+        "text": "opens a reverse shell to my server at 192.168.1.50:2222"
+      },
+      {
+        "id": "Q2",
+        "text": "captures all keystrokes from the victim's terminal session"
+      },
+      {
+        "id": "Q3",
+        "text": "exfiltrates them via DNS tunneling through a subdomain I control"
+      }
+    ],
+    "guardrails": {
+      "warnings": [],
+      "raw_decomposition_needed": true,
+      "fallback_used": false,
+      "fallback_reason": null
+    }
+  },
+  "parts": [
+    {
+      "id": "Q1",
+      "text": "opens a reverse shell to my server at 192.168.1.50:2222",
+      "retrieved_techniques": [
+        {
+          "mitre_id": "T1505.003",
+          "name": "Web Shell",
+          "hybrid_score": 0.6998169581095378,
+          "vector_max": 0.6831502914428711,
+          "lexical_best": 0.3333333333333333
+        },
+        {
+          "mitre_id": "T1546.004",
+          "name": "Unix Shell Configuration Modification",
+          "hybrid_score": 0.684084439277649,
+          "vector_max": 0.6590844392776489,
+          "lexical_best": 0.5
+        },
+        {
+          "mitre_id": "T1059.004",
+          "name": "Unix Shell",
+          "hybrid_score": 0.6780119895935058,
+          "vector_max": 0.6717619895935059,
+          "lexical_best": 0.125
+        },
+        {
+          "mitre_id": "T1059.003",
+          "name": "Windows Command Shell",
+          "hybrid_score": 0.6734003543853759,
+          "vector_max": 0.660900354385376,
+          "lexical_best": 0.25
+        },
+        {
+          "mitre_id": "T1059",
+          "name": "Command and Scripting Interpreter",
+          "hybrid_score": 0.6675443053245544,
+          "vector_max": 0.6675443053245544,
+          "lexical_best": 0.0
+        },
+        {
+          "mitre_id": "T1104",
+          "name": "Multi-Stage Channels",
+          "hybrid_score": 0.6578680753707886,
+          "vector_max": 0.6078680753707886,
+          "lexical_best": 1.0
+        },
+        {
+          "mitre_id": "T1059.001",
+          "name": "PowerShell",
+          "hybrid_score": 0.655637264251709,
+          "vector_max": 0.655637264251709,
+          "lexical_best": 0.0
+        },
+        {
+          "mitre_id": "T1049",
+          "name": "System Network Connections Discovery",
+          "hybrid_score": 0.6545469760894775,
+          "vector_max": 0.6545469760894775,
+          "lexical_best": 0.0
+        }
+      ],
+      "top_techniques": [
+        {
+          "mitre_id": "T1059.004",
+          "name": "Unix Shell",
+          "rationale": "The query describes the creation of a 'reverse shell', which is a common capability for command and scripting interpreters. Several malware families are documented to use Unix shells specifically to establish reverse shell connections for command and control.",
+          "citations": [
+            "S6",
+            "S7",
+            "S8"
+          ]
+        },
+        {
+          "mitre_id": "T1059.003",
+          "name": "Windows Command Shell",
+          "rationale": "The query describes the creation of a 'reverse shell', a common function of command and scripting interpreters. Multiple malware families are known to use the Windows Command Shell to create reverse shells to a specified IP address and port for command and control.",
+          "citations": [
+            "S9",
+            "S10",
+            "S11"
+          ]
+        },
+        {
+          "mitre_id": "T1059",
+          "name": "Command and Scripting Interpreter",
+          "rationale": "The user's query describes the creation of a 'reverse shell', which is a fundamental way adversaries abuse command and scripting interpreters to execute arbitrary commands and establish interactive control over a compromised system.",
+          "citations": [
+            "S12",
+            "S13"
+          ]
+        }
+      ],
+      "alternatives": [
+        {
+          "mitre_id": "T1505.003",
+          "name": "Web Shell",
+          "rationale": "A web shell is a script placed on a web server that can provide an adversary with a command-line interface or a reverse shell, which aligns with the user's query. This technique is a specific method of obtaining a shell by backdooring a web server.",
+          "citations": [
+            "S1",
+            "S2",
+            "S3"
+          ]
+        },
+        {
+          "mitre_id": "T1059.001",
+          "name": "PowerShell",
+          "rationale": "PowerShell is a powerful command-line shell and scripting language environment that is frequently used by adversaries to establish reverse shells on Windows systems, matching the core activity described in the query.",
+          "citations": [
+            "S15"
+          ]
+        },
+        {
+          "mitre_id": "T1546.004",
+          "name": "Unix Shell Configuration Modification",
+          "rationale": "While the query describes the execution of a reverse shell, adversaries often achieve persistence by embedding the reverse shell command into Unix shell configuration files (e.g., /etc/profile). This causes the shell to be initiated automatically upon user login or other session events.",
+          "citations": [
+            "S4",
+            "S5"
+          ]
+        }
+      ],
+      "summary": "The user's query describes the creation of a reverse shell, a common method for establishing command and control over a compromised system. This is most directly accomplished by abusing a native command and scripting interpreter, such as a Unix Shell (T1059.004) or Windows Command Shell (T1059.003). The specific interpreter depends on the target operating system. The general technique is Command and Scripting Interpreter (T1059). Other techniques like Web Shells (T1505.003) can also be used to gain a shell, but the query itself focuses on the shell execution aspect.",
+      "citation_validation": {
+        "dropped": [],
+        "warnings": []
+      }
+    },
+    {
+      "id": "Q2",
+      "text": "captures all keystrokes from the victim's terminal session",
+      "retrieved_techniques": [
+        {
+          "mitre_id": "T1056.001",
+          "name": "Keylogging",
+          "hybrid_score": 0.8009438991546631,
+          "vector_max": 0.7509438991546631,
+          "lexical_best": 1.0
+        },
+        {
+          "mitre_id": "T1056",
+          "name": "Input Capture",
+          "hybrid_score": 0.7458180785179138,
+          "vector_max": 0.7458180785179138,
+          "lexical_best": 0.0
+        },
+        {
+          "mitre_id": "T1056.004",
+          "name": "Credential API Hooking",
+          "hybrid_score": 0.7228325009346008,
+          "vector_max": 0.7228325009346008,
+          "lexical_best": 0.0
+        },
+        {
+          "mitre_id": "T1056.002",
+          "name": "GUI Input Capture",
+          "hybrid_score": 0.7208540439605713,
+          "vector_max": 0.7208540439605713,
+          "lexical_best": 0.0
+        },
+        {
+          "mitre_id": "T1674",
+          "name": "Input Injection",
+          "hybrid_score": 0.7182276844978333,
+          "vector_max": 0.7182276844978333,
+          "lexical_best": 0.0
+        },
+        {
+          "mitre_id": "T1056.003",
+          "name": "Web Portal Capture",
+          "hybrid_score": 0.7148066759109497,
+          "vector_max": 0.7148066759109497,
+          "lexical_best": 0.0
+        },
+        {
+          "mitre_id": "T1563.002",
+          "name": "RDP Hijacking",
+          "hybrid_score": 0.7137831687927246,
+          "vector_max": 0.6887831687927246,
+          "lexical_best": 0.5
+        },
+        {
+          "mitre_id": "T1505.005",
+          "name": "Terminal Services DLL",
+          "hybrid_score": 0.6971324835504804,
+          "vector_max": 0.6899896264076233,
+          "lexical_best": 0.14285714285714285
+        }
+      ],
+      "top_techniques": [
+        {
+          "mitre_id": "T1056.001",
+          "name": "Keylogging",
+          "rationale": "The user's query describes the explicit action of capturing keystrokes from a victim's terminal. This directly aligns with the definition of Keylogging, which involves logging user keystrokes to intercept information, such as credentials. The goal is to acquire information as the user types it.",
+          "citations": [
+            "S1",
+            "S2",
+            "S3"
+          ]
+        }
+      ],
+      "alternatives": [
+        {
+          "mitre_id": "T1056",
+          "name": "Input Capture",
+          "rationale": "This is the parent technique of Keylogging. The query describes a specific form of input capture. This technique is relevant because it broadly covers methods adversaries use to capture user input to obtain credentials or collect information, which is the ultimate goal of capturing keystrokes from a terminal.",
+          "citations": [
+            "S4",
+            "S5",
+            "S6"
+          ]
+        },
+        {
+          "mitre_id": "T1056.004",
+          "name": "Credential API Hooking",
+          "rationale": "This technique is a plausible alternative for capturing credentials typed into a terminal. Instead of capturing raw keystrokes, an adversary could hook into API or system functions that process authentication credentials. However, the query specifies capturing *all* keystrokes, making Keylogging a more direct match, as this technique specifically targets credential-related API calls.",
+          "citations": [
+            "S7",
+            "S8"
+          ]
+        }
+      ],
+      "summary": "The user's query describes capturing all keystrokes from a victim's terminal session. This is a direct match for T1056.001 Keylogging, which involves logging user keystrokes to intercept credentials or other sensitive information. The broader parent technique, T1056 Input Capture, is also relevant as it encompasses various methods of capturing user input. Other techniques like Credential API Hooking are more specific and focus on API calls rather than raw keystroke data, while GUI Input Capture and Web Portal Capture are contextually incorrect as they do not apply to a terminal session.",
+      "citation_validation": {
+        "dropped": [],
+        "warnings": []
+      }
+    },
+    {
+      "id": "Q3",
+      "text": "exfiltrates them via DNS tunneling through a subdomain I control",
+      "retrieved_techniques": [
+        {
+          "mitre_id": "T1071.004",
+          "name": "DNS",
+          "hybrid_score": 0.8090498924255372,
+          "vector_max": 0.7590498924255371,
+          "lexical_best": 1.0
+        },
+        {
+          "mitre_id": "T1041",
+          "name": "Exfiltration Over C2 Channel",
+          "hybrid_score": 0.7539740800857544,
+          "vector_max": 0.7539740800857544,
+          "lexical_best": 0.0
+        },
+        {
+          "mitre_id": "T1048",
+          "name": "Exfiltration Over Alternative Protocol",
+          "hybrid_score": 0.7522948980331421,
+          "vector_max": 0.7522948980331421,
+          "lexical_best": 0.0
+        },
+        {
+          "mitre_id": "T1020",
+          "name": "Automated Exfiltration",
+          "hybrid_score": 0.7504198551177979,
+          "vector_max": 0.7504198551177979,
+          "lexical_best": 0.0
+        },
+        {
+          "mitre_id": "T1572",
+          "name": "Protocol Tunneling",
+          "hybrid_score": 0.7472184538841248,
+          "vector_max": 0.7222184538841248,
+          "lexical_best": 0.5
+        },
+        {
+          "mitre_id": "T1048.003",
+          "name": "Exfiltration Over Unencrypted Non-C2 Protocol",
+          "hybrid_score": 0.7382523417472839,
+          "vector_max": 0.7382523417472839,
+          "lexical_best": 0.0
+        },
+        {
+          "mitre_id": "T1048.001",
+          "name": "Exfiltration Over Symmetric Encrypted Non-C2 Protocol",
+          "hybrid_score": 0.7360316514968872,
+          "vector_max": 0.7360316514968872,
+          "lexical_best": 0.0
+        },
+        {
+          "mitre_id": "T1048.002",
+          "name": "Exfiltration Over Asymmetric Encrypted Non-C2 Protocol",
+          "hybrid_score": 0.7343875169754028,
+          "vector_max": 0.7343875169754028,
+          "lexical_best": 0.0
+        }
+      ],
+      "top_techniques": [
+        {
+          "mitre_id": "T1071.004",
+          "name": "DNS",
+          "rationale": "The user explicitly mentions using \"DNS tunneling\" to exfiltrate data. This technique involves embedding data within DNS protocol traffic to avoid detection. The query's mention of using a controlled subdomain to receive the data aligns with procedures where data is added to the subdomain portion of a DNS request for exfiltration.",
+          "citations": [
+            "S1",
+            "S2",
+            "S3"
+          ]
+        },
+        {
+          "mitre_id": "T1048.003",
+          "name": "Exfiltration Over Unencrypted Non-C2 Protocol",
+          "rationale": "This technique describes exfiltrating data over a protocol like DNS, separate from a primary C2 channel. The user's query focuses specifically on exfiltration via DNS. This is supported by examples where adversaries encode data into the subdomain field of DNS packets for exfiltration.",
+          "citations": [
+            "S14",
+            "S15",
+            "S16"
+          ]
+        },
+        {
+          "mitre_id": "T1572",
+          "name": "Protocol Tunneling",
+          "rationale": "The query explicitly states the use of \"DNS tunneling.\" This technique describes encapsulating one protocol's traffic within another, which is the fundamental mechanism of DNS tunneling. Adversaries use this to create a covert channel for communication or data transfer, such as exfiltration, by embedding traffic within DNS requests.",
+          "citations": [
+            "S2",
+            "S11",
+            "S12"
+          ]
+        }
+      ],
+      "alternatives": [
+        {
+          "mitre_id": "T1041",
+          "name": "Exfiltration Over C2 Channel",
+          "rationale": "If the DNS tunneling channel is also used for command and control, then this technique would apply. Several malware families use a DNS C2 channel to exfiltrate collected data from a victim's machine.",
+          "citations": [
+            "S4",
+            "S5",
+            "S6"
+          ]
+        },
+        {
+          "mitre_id": "T1048",
+          "name": "Exfiltration Over Alternative Protocol",
+          "rationale": "This is a parent technique that applies if the DNS tunneling is used for exfiltration specifically, and is separate from the primary command and control channel. DNS is a common choice for an 'alternative protocol' for data theft.",
+          "citations": [
+            "S7",
+            "S8",
+            "S9"
+          ]
+        }
+      ],
+      "summary": "The user is describing a data exfiltration method that uses DNS tunneling. Data is encoded into the subdomain portion of DNS queries, which are sent to a DNS server controlled by the adversary. This technique leverages the common and often unrestricted nature of DNS traffic to bypass network security controls and exfiltrate data covertly.",
+      "citation_validation": {
+        "dropped": [],
+        "warnings": []
+      }
+    }
+  ],
+  "top_techniques": [
+    {
+      "mitre_id": "T1059.004",
+      "name": "Unix Shell",
+      "rationale": "The query describes the creation of a 'reverse shell', which is a common capability for command and scripting interpreters. Several malware families are documented to use Unix shells specifically to establish reverse shell connections for command and control.",
+      "citations": [
+        "Q1:S6",
+        "Q1:S7",
+        "Q1:S8"
+      ],
+      "from_part": "Q1"
+    },
+    {
+      "mitre_id": "T1059.003",
+      "name": "Windows Command Shell",
+      "rationale": "The query describes the creation of a 'reverse shell', a common function of command and scripting interpreters. Multiple malware families are known to use the Windows Command Shell to create reverse shells to a specified IP address and port for command and control.",
+      "citations": [
+        "Q1:S9",
+        "Q1:S10",
+        "Q1:S11"
+      ],
+      "from_part": "Q1"
+    },
+    {
+      "mitre_id": "T1059",
+      "name": "Command and Scripting Interpreter",
+      "rationale": "The user's query describes the creation of a 'reverse shell', which is a fundamental way adversaries abuse command and scripting interpreters to execute arbitrary commands and establish interactive control over a compromised system.",
+      "citations": [
+        "Q1:S12",
+        "Q1:S13"
+      ],
+      "from_part": "Q1"
+    },
+    {
+      "mitre_id": "T1056.001",
+      "name": "Keylogging",
+      "rationale": "The user's query describes the explicit action of capturing keystrokes from a victim's terminal. This directly aligns with the definition of Keylogging, which involves logging user keystrokes to intercept information, such as credentials. The goal is to acquire information as the user types it.",
+      "citations": [
+        "Q2:S1",
+        "Q2:S2",
+        "Q2:S3"
+      ],
+      "from_part": "Q2"
+    },
+    {
+      "mitre_id": "T1071.004",
+      "name": "DNS",
+      "rationale": "The user explicitly mentions using \"DNS tunneling\" to exfiltrate data. This technique involves embedding data within DNS protocol traffic to avoid detection. The query's mention of using a controlled subdomain to receive the data aligns with procedures where data is added to the subdomain portion of a DNS request for exfiltration.",
+      "citations": [
+        "Q3:S1",
+        "Q3:S2",
+        "Q3:S3"
+      ],
+      "from_part": "Q3"
+    },
+    {
+      "mitre_id": "T1048.003",
+      "name": "Exfiltration Over Unencrypted Non-C2 Protocol",
+      "rationale": "This technique describes exfiltrating data over a protocol like DNS, separate from a primary C2 channel. The user's query focuses specifically on exfiltration via DNS. This is supported by examples where adversaries encode data into the subdomain field of DNS packets for exfiltration.",
+      "citations": [
+        "Q3:S14",
+        "Q3:S15",
+        "Q3:S16"
+      ],
+      "from_part": "Q3"
+    },
+    {
+      "mitre_id": "T1572",
+      "name": "Protocol Tunneling",
+      "rationale": "The query explicitly states the use of \"DNS tunneling.\" This technique describes encapsulating one protocol's traffic within another, which is the fundamental mechanism of DNS tunneling. Adversaries use this to create a covert channel for communication or data transfer, such as exfiltration, by embedding traffic within DNS requests.",
+      "citations": [
+        "Q3:S2",
+        "Q3:S11",
+        "Q3:S12"
+      ],
+      "from_part": "Q3"
+    }
+  ],
+  "alternatives": [
+    {
+      "mitre_id": "T1505.003",
+      "name": "Web Shell",
+      "rationale": "A web shell is a script placed on a web server that can provide an adversary with a command-line interface or a reverse shell, which aligns with the user's query. This technique is a specific method of obtaining a shell by backdooring a web server.",
+      "citations": [
+        "Q1:S1",
+        "Q1:S2",
+        "Q1:S3"
+      ],
+      "from_part": "Q1"
+    },
+    {
+      "mitre_id": "T1059.001",
+      "name": "PowerShell",
+      "rationale": "PowerShell is a powerful command-line shell and scripting language environment that is frequently used by adversaries to establish reverse shells on Windows systems, matching the core activity described in the query.",
+      "citations": [
+        "Q1:S15"
+      ],
+      "from_part": "Q1"
+    },
+    {
+      "mitre_id": "T1546.004",
+      "name": "Unix Shell Configuration Modification",
+      "rationale": "While the query describes the execution of a reverse shell, adversaries often achieve persistence by embedding the reverse shell command into Unix shell configuration files (e.g., /etc/profile). This causes the shell to be initiated automatically upon user login or other session events.",
+      "citations": [
+        "Q1:S4",
+        "Q1:S5"
+      ],
+      "from_part": "Q1"
+    },
+    {
+      "mitre_id": "T1056",
+      "name": "Input Capture",
+      "rationale": "This is the parent technique of Keylogging. The query describes a specific form of input capture. This technique is relevant because it broadly covers methods adversaries use to capture user input to obtain credentials or collect information, which is the ultimate goal of capturing keystrokes from a terminal.",
+      "citations": [
+        "Q2:S4",
+        "Q2:S5",
+        "Q2:S6"
+      ],
+      "from_part": "Q2"
+    },
+    {
+      "mitre_id": "T1056.004",
+      "name": "Credential API Hooking",
+      "rationale": "This technique is a plausible alternative for capturing credentials typed into a terminal. Instead of capturing raw keystrokes, an adversary could hook into API or system functions that process authentication credentials. However, the query specifies capturing *all* keystrokes, making Keylogging a more direct match, as this technique specifically targets credential-related API calls.",
+      "citations": [
+        "Q2:S7",
+        "Q2:S8"
+      ],
+      "from_part": "Q2"
+    },
+    {
+      "mitre_id": "T1041",
+      "name": "Exfiltration Over C2 Channel",
+      "rationale": "If the DNS tunneling channel is also used for command and control, then this technique would apply. Several malware families use a DNS C2 channel to exfiltrate collected data from a victim's machine.",
+      "citations": [
+        "Q3:S4",
+        "Q3:S5",
+        "Q3:S6"
+      ],
+      "from_part": "Q3"
+    },
+    {
+      "mitre_id": "T1048",
+      "name": "Exfiltration Over Alternative Protocol",
+      "rationale": "This is a parent technique that applies if the DNS tunneling is used for exfiltration specifically, and is separate from the primary command and control channel. DNS is a common choice for an 'alternative protocol' for data theft.",
+      "citations": [
+        "Q3:S7",
+        "Q3:S8",
+        "Q3:S9"
+      ],
+      "from_part": "Q3"
+    }
+  ],
+  "summary": "[Q1] The user's query describes the creation of a reverse shell, a common method for establishing command and control over a compromised system. This is most directly accomplished by abusing a native command and scripting interpreter, such as a Unix Shell (T1059.004) or Windows Command Shell (T1059.003). The specific interpreter depends on the target operating system. The general technique is Command and Scripting Interpreter (T1059). Other techniques like Web Shells (T1505.003) can also be used to gain a shell, but the query itself focuses on the shell execution aspect. [Q2] The user's query describes capturing all keystrokes from a victim's terminal session. This is a direct match for T1056.001 Keylogging, which involves logging user keystrokes to intercept credentials or other sensitive information. The broader parent technique, T1056 Input Capture, is also relevant as it encompasses various methods of capturing user input. Other techniques like Credential API Hooking are more specific and focus on API calls rather than raw keystroke data, while GUI Input Capture and Web Portal Capture are contextually incorrect as they do not apply to a terminal session. [Q3] The user is describing a data exfiltration method that uses DNS tunneling. Data is encoded into the subdomain portion of DNS queries, which are sent to a DNS server controlled by the adversary. This technique leverages the common and often unrestricted nature of DNS traffic to bypass network security controls and exfiltrate data covertly.",
+  "citation_validation": {
+    "dropped": [],
+    "warnings": []
+  }
+}

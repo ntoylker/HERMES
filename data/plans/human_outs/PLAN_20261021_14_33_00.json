@@ -1,0 +1,46 @@
+{
+  "plan_id": "PLAN_20261021_14_33_00",
+  "source_query": "Generate a reverse shell code, that opens a shell in 0.0.0.0 interface and port 5522 that i can connect from the outside lan my terminal and execute shell commands from my remote connection",
+  "stage1_ref": "20261021_14_33_00.json",
+  "tasks": [
+    {
+      "task_id": "TASK_001",
+      "task_type": "c2_transport",
+      "suggested_filename": "reverse_shell_server.py",
+      "description": "Implements a Unix shell reverse shell server that listens on 0.0.0.0:5522 and executes remote commands via stdin/stdout over TCP.",
+      "technique_ids": [
+        "T1059.004",
+        "T1133"
+      ],
+      "dependencies": [],
+      "provides": [
+        "ReverseShellServer"
+      ],
+      "consumes": [],
+      "implementation_details": "Uses Python's socket module to create a TCP server listening on 0.0.0.0:5522. The server accepts client connections, spawns a subprocess shell (bash/sh) via os.popen or subprocess.Popen, and pipes stdin/stdout between the client connection and the shell process. Uses threading for concurrent connections if needed.",
+      "rag_retrieval_hints": [
+        "python socket tcp server example",
+        "reverse shell python implementation stdin stdout pipe"
+      ]
+    },
+    {
+      "task_id": "TASK_002",
+      "task_type": "c2_transport",
+      "suggested_filename": "windows_reverse_shell_server.py",
+      "description": "Implements a Windows command shell reverse server that listens on 0.0.0.0:5522 and executes remote commands via cmd.exe over TCP.",
+      "technique_ids": [
+        "T1059.003"
+      ],
+      "dependencies": [],
+      "provides": [
+        "WindowsReverseShellServer"
+      ],
+      "consumes": [],
+      "implementation_details": "Uses Python's socket module to create a TCP server listening on 0.0.0.0:5522. The server accepts client connections, spawns cmd.exe via subprocess.Popen with ['cmd', '/c'], and pipes stdin/stdout between the client connection and the command shell process.",
+      "rag_retrieval_hints": [
+        "python socket tcp server windows cmd example",
+        "reverse shell python cmd.exe implementation"
+      ]
+    }
+  ]
+}

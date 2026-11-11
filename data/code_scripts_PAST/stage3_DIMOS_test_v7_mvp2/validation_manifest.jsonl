@@ -1,0 +1,6 @@
+{"run_dir": "data\\code_scripts", "task_id": "TASK_001", "filename": "TASK_001_models.py", "verdict": "pass", "findings": [], "missing_dependencies": [], "timestamp": "2026-10-21T11:03:23.021479+00:00"}
+{"run_dir": "data\\code_scripts", "task_id": "TASK_002", "filename": "TASK_002_utils.py", "verdict": "pass", "findings": [], "missing_dependencies": [], "timestamp": "2026-10-21T11:03:23.023629+00:00"}
+{"run_dir": "data\\code_scripts", "task_id": "TASK_003", "filename": "TASK_003_unix_reverse_shell.py", "verdict": "pass", "findings": [], "missing_dependencies": [], "timestamp": "2026-10-21T11:03:23.029149+00:00"}
+{"run_dir": "data\\code_scripts", "task_id": "TASK_004", "filename": "TASK_004_windows_reverse_shell.py", "verdict": "pass", "findings": [], "missing_dependencies": [], "timestamp": "2026-10-21T11:03:23.036694+00:00"}
+{"run_dir": "data\\code_scripts", "task_id": "TASK_005", "filename": "TASK_005_transport.py", "verdict": "pass", "findings": [], "missing_dependencies": [], "timestamp": "2026-10-21T11:03:23.045689+00:00"}
+{"run_dir": "data\\code_scripts", "task_id": "TASK_006", "filename": "TASK_006_main.py", "verdict": "pass", "findings": [], "missing_dependencies": [], "timestamp": "2026-10-21T11:03:23.049928+00:00"}

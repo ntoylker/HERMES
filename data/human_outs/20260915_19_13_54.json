@@ -1,0 +1,842 @@
+{
+  "query": "Generate a complete attack chain starting with phishing email delivery, moving to credential harvesting via a fake login page, establishing persistence through a scheduled task, lateral movement using stolen SSH keys, and finally accessing the cloud admin console to rotate all credentials. Include code for each stage.\r\n\r\n47.8 seconds",
+  "decomposition": {
+    "decomposed": true,
+    "sub_queries": [
+      {
+        "id": "Q1",
+        "text": "phishing email delivery"
+      },
+      {
+        "id": "Q2",
+        "text": "credential harvesting via a fake login page"
+      },
+      {
+        "id": "Q3",
+        "text": "establishing persistence through a scheduled task"
+      },
+      {
+        "id": "Q4",
+        "text": "lateral movement using stolen SSH keys"
+      },
+      {
+        "id": "Q5",
+        "text": "accessing the cloud admin console to rotate all credentials"
+      }
+    ],
+    "guardrails": {
+      "warnings": [],
+      "raw_decomposition_needed": true,
+      "fallback_used": false,
+      "fallback_reason": null
+    }
+  },
+  "parts": [
+    {
+      "id": "Q1",
+      "text": "phishing email delivery",
+      "retrieved_techniques": [
+        {
+          "mitre_id": "T1566",
+          "name": "Phishing",
+          "hybrid_score": 0.7552372260527177,
+          "vector_max": 0.7506917715072632,
+          "lexical_best": 0.09090909090909091
+        },
+        {
+          "mitre_id": "T1566.002",
+          "name": "Spearphishing Link",
+          "hybrid_score": 0.7454183101654053,
+          "vector_max": 0.7454183101654053,
+          "lexical_best": 0.0
+        },
+        {
+          "mitre_id": "T1586.002",
+          "name": "Email Accounts",
+          "hybrid_score": 0.7424453377723694,
+          "vector_max": 0.6924453377723694,
+          "lexical_best": 1.0
+        },
+        {
+          "mitre_id": "T1566.001",
+          "name": "Spearphishing Attachment",
+          "hybrid_score": 0.7331855522261725,
+          "vector_max": 0.7304077744483948,
+          "lexical_best": 0.05555555555555555
+        },
+        {
+          "mitre_id": "T1566.003",
+          "name": "Spearphishing via Service",
+          "hybrid_score": 0.7296140193939209,
+          "vector_max": 0.7296140193939209,
+          "lexical_best": 0.0
+        },
+        {
+          "mitre_id": "T1598.003",
+          "name": "Spearphishing Link",
+          "hybrid_score": 0.7217167615890503,
+          "vector_max": 0.7217167615890503,
+          "lexical_best": 0.0
+        },
+        {
+          "mitre_id": "T1585.002",
+          "name": "Email Accounts",
+          "hybrid_score": 0.717582368850708,
+          "vector_max": 0.692582368850708,
+          "lexical_best": 0.5
+        },
+        {
+          "mitre_id": "T1598",
+          "name": "Phishing for Information",
+          "hybrid_score": 0.7163378628094991,
+          "vector_max": 0.7130045294761658,
+          "lexical_best": 0.06666666666666667
+        }
+      ],
+      "top_techniques": [
+        {
+          "mitre_id": "T1566",
+          "name": "Phishing",
+          "rationale": "This technique directly describes the act of sending phishing messages through electronic delivery to gain access to victim systems. The user's query 'phishing email delivery' is the core concept of this technique. Phishing can be targeted (spearphishing) or non-targeted and may contain malicious links or attachments to execute code.",
+          "citations": [
+            "S1",
+            "S2"
+          ]
+        },
+        {
+          "mitre_id": "T1566.001",
+          "name": "Spearphishing Attachment",
+          "rationale": "This is a specific method of phishing where an adversary sends a targeted email containing a malicious attachment. The goal is to have the user open the attachment, which then executes a payload on their system. This represents one of the primary ways a phishing email delivers its malicious content.",
+          "citations": [
+            "S10",
+            "S11"
+          ]
+        },
+        {
+          "mitre_id": "T1566.002",
+          "name": "Spearphishing Link",
+          "rationale": "This is a specific method of phishing where an adversary sends a targeted email containing a malicious link. The goal is to entice the user to click the link, which leads to a site that either compromises the browser or prompts the user to download malicious content. This is another primary method for delivering a malicious payload via a phishing email.",
+          "citations": [
+            "S4",
+            "S5"
+          ]
+        }
+      ],
+      "alternatives": [
+        {
+          "mitre_id": "T1586.002",
+          "name": "Email Accounts",
+          "rationale": "Adversaries may compromise existing email accounts to send phishing emails. Using a compromised account, especially one known to the target, can increase the legitimacy of the phishing attempt and improve the chances of success. This technique represents acquiring the infrastructure needed for the delivery.",
+          "citations": [
+            "S7",
+            "S8",
+            "S9"
+          ]
+        },
+        {
+          "mitre_id": "T1598",
+          "name": "Phishing for Information",
+          "rationale": "This technique describes sending phishing messages with the specific goal of eliciting sensitive information, such as credentials, rather than executing malicious code. While the query focuses on 'delivery,' this technique represents a common objective for such a delivery mechanism.",
+          "citations": [
+            "S22",
+            "S23"
+          ]
+        },
+        {
+          "mitre_id": "T1585.002",
+          "name": "Email Accounts",
+          "rationale": "Adversaries may create new email accounts to use for phishing campaigns. This is a resource development technique that enables the 'phishing email delivery' described in the query by establishing the necessary infrastructure.",
+          "citations": [
+            "S19",
+            "S20",
+            "S21"
+          ]
+        }
+      ],
+      "summary": "The user's query describes the delivery of phishing emails, a common method for gaining initial access to a target environment. The primary technique is T1566 (Phishing), which involves sending electronically delivered social engineering messages. The payload is typically delivered via a malicious attachment (T1566.001) or a malicious link (T1566.002). To facilitate these campaigns, adversaries may acquire infrastructure by creating new email accounts (T1585.002) or compromising existing ones (T1586.002).",
+      "citation_validation": {
+        "dropped": [],
+        "warnings": []
+      }
+    },
+    {
+      "id": "Q2",
+      "text": "credential harvesting via a fake login page",
+      "retrieved_techniques": [
+        {
+          "mitre_id": "T1056.003",
+          "name": "Web Portal Capture",
+          "hybrid_score": 0.8182849168777466,
+          "vector_max": 0.7682849168777466,
+          "lexical_best": 1.0
+        },
+        {
+          "mitre_id": "T1598.003",
+          "name": "Spearphishing Link",
+          "hybrid_score": 0.7826659242312114,
+          "vector_max": 0.7659992575645447,
+          "lexical_best": 0.3333333333333333
+        },
+        {
+          "mitre_id": "T1056.002",
+          "name": "GUI Input Capture",
+          "hybrid_score": 0.7604436278343201,
+          "vector_max": 0.7604436278343201,
+          "lexical_best": 0.0
+        },
+        {
+          "mitre_id": "T1056",
+          "name": "Input Capture",
+          "hybrid_score": 0.7438553015391032,
+          "vector_max": 0.7396886348724365,
+          "lexical_best": 0.08333333333333333
+        },
+        {
+          "mitre_id": "T1056.001",
+          "name": "Keylogging",
+          "hybrid_score": 0.740965974330902,
+          "vector_max": 0.7284659743309021,
+          "lexical_best": 0.25
+        },
+        {
+          "mitre_id": "T1598",
+          "name": "Phishing for Information",
+          "hybrid_score": 0.7351874709129333,
+          "vector_max": 0.7351874709129333,
+          "lexical_best": 0.0
+        },
+        {
+          "mitre_id": "T1589.001",
+          "name": "Credentials",
+          "hybrid_score": 0.7309775352478027,
+          "vector_max": 0.7309775352478027,
+          "lexical_best": 0.0
+        },
+        {
+          "mitre_id": "T1608.005",
+          "name": "Link Target",
+          "hybrid_score": 0.7299450087547302,
+          "vector_max": 0.7249450087547302,
+          "lexical_best": 0.1
+        }
+      ],
+      "top_techniques": [
+        {
+          "mitre_id": "T1056.003",
+          "name": "Web Portal Capture",
+          "rationale": "This technique describes capturing user credentials by using a fake or compromised login page, which directly matches the user's query. Adversaries can install code on a portal to log credentials or create a fake login page to collect them. The Kimsuky group, for example, used a fake Google account login page for this purpose.",
+          "citations": [
+            "S1",
+            "S2",
+            "S3"
+          ]
+        },
+        {
+          "mitre_id": "T1598.003",
+          "name": "Spearphishing Link",
+          "rationale": "This technique is the common delivery mechanism for a fake login page. Adversaries send targeted messages containing a malicious link that directs victims to a credential harvesting website, which is often a clone of a legitimate corporate login portal.",
+          "citations": [
+            "S4",
+            "S5",
+            "S6"
+          ]
+        }
+      ],
+      "alternatives": [
+        {
+          "mitre_id": "T1608.005",
+          "name": "Link Target",
+          "rationale": "This technique describes the setup of the infrastructure required for a fake login page attack. Adversaries clone legitimate sites, including login pages, and stage them as the destination for a malicious link used in a credential harvesting campaign.",
+          "citations": [
+            "S16",
+            "S17"
+          ]
+        },
+        {
+          "mitre_id": "T1056.002",
+          "name": "GUI Input Capture",
+          "rationale": "This is an alternative method for credential harvesting that uses a fake prompt mimicking an operating system component rather than a web page. For example, an adversary might create a spoofed Windows Authentication prompt to collect credentials.",
+          "citations": [
+            "S7",
+            "S8",
+            "S9"
+          ]
+        },
+        {
+          "mitre_id": "T1056",
+          "name": "Input Capture",
+          "rationale": "This is the parent technique for Web Portal Capture. It broadly covers methods of capturing user input to obtain credentials, including deceiving a user into providing input to what they believe is a genuine service, such as a fake login page.",
+          "citations": [
+            "S10",
+            "S11",
+            "S12"
+          ]
+        }
+      ],
+      "summary": "The user's query describes a credential harvesting attack using a fake login page. This is most accurately represented by Web Portal Capture (T1056.003), where an adversary uses a fraudulent web page to collect user credentials. This is often preceded by Spearphishing Link (T1598.003), which is the method used to deliver the link to the fake page to the victim. The infrastructure for this attack, such as cloning a legitimate login page, is covered by Link Target (T1608.005).",
+      "citation_validation": {
+        "dropped": [],
+        "warnings": []
+      }
+    },
+    {
+      "id": "Q3",
+      "text": "establishing persistence through a scheduled task",
+      "retrieved_techniques": [
+        {
+          "mitre_id": "T1053.005",
+          "name": "Scheduled Task",
+          "hybrid_score": 0.8556163787841797,
+          "vector_max": 0.8056163787841797,
+          "lexical_best": 1.0
+        },
+        {
+          "mitre_id": "T1053",
+          "name": "Scheduled Task/Job",
+          "hybrid_score": 0.800659716129303,
+          "vector_max": 0.800659716129303,
+          "lexical_best": 0.0
+        }
+      ],
+      "top_techniques": [
+        {
+          "mitre_id": "T1053.005",
+          "name": "Scheduled Task",
+          "rationale": "This technique specifically describes the abuse of the Windows Task Scheduler to execute malicious code on a recurring basis or at system startup for the purpose of persistence. The query directly mentions establishing persistence via a scheduled task, which aligns perfectly with this technique's description. Examples show threat actors like APT3 using the `schtasks` command-line utility to create tasks that run on logon, ensuring their malware persists.",
+          "citations": [
+            "S1",
+            "S3"
+          ]
+        }
+      ],
+      "alternatives": [
+        {
+          "mitre_id": "T1053",
+          "name": "Scheduled Task/Job",
+          "rationale": "This is the parent technique for T1053.005 and covers the general abuse of task scheduling functionality across all major operating systems, not just Windows. It describes how adversaries use scheduled tasks to execute malicious code for persistence, often with elevated privileges. While the query is well-described by the Windows-specific sub-technique, this parent technique is a valid, broader alternative.",
+          "citations": [
+            "S4",
+            "S5"
+          ]
+        }
+      ],
+      "summary": "The user's query describes using a scheduled task to maintain access to a system, a common persistence mechanism. The most relevant technique is T1053.005 (Scheduled Task), which details how adversaries abuse the Windows Task Scheduler with tools like `schtasks` to execute malicious code repeatedly, such as at system startup or user logon. The parent technique, T1053 (Scheduled Task/Job), is also relevant as it covers the broader concept across different operating systems.",
+      "citation_validation": {
+        "dropped": [],
+        "warnings": []
+      }
+    },
+    {
+      "id": "Q4",
+      "text": "lateral movement using stolen SSH keys",
+      "retrieved_techniques": [
+        {
+          "mitre_id": "T1021.004",
+          "name": "SSH",
+          "hybrid_score": 0.8074723362922669,
+          "vector_max": 0.7574723362922668,
+          "lexical_best": 1.0
+        },
+        {
+          "mitre_id": "T1563.001",
+          "name": "SSH Hijacking",
+          "hybrid_score": 0.7721700112024943,
+          "vector_max": 0.7680033445358276,
+          "lexical_best": 0.08333333333333333
+        },
+        {
+          "mitre_id": "T1552.004",
+          "name": "Private Keys",
+          "hybrid_score": 0.7479926347732544,
+          "vector_max": 0.7479926347732544,
+          "lexical_best": 0.0
+        },
+        {
+          "mitre_id": "T1098.004",
+          "name": "SSH Authorized Keys",
+          "hybrid_score": 0.7439824938774109,
+          "vector_max": 0.7439824938774109,
+          "lexical_best": 0.0
+        },
+        {
+          "mitre_id": "T1563",
+          "name": "Remote Service Session Hijacking",
+          "hybrid_score": 0.7342759370803833,
+          "vector_max": 0.7342759370803833,
+          "lexical_best": 0.0
+        },
+        {
+          "mitre_id": "T1550.002",
+          "name": "Pass the Hash",
+          "hybrid_score": 0.7316468358039856,
+          "vector_max": 0.7316468358039856,
+          "lexical_best": 0.0
+        },
+        {
+          "mitre_id": "T1550",
+          "name": "Use Alternate Authentication Material",
+          "hybrid_score": 0.7290191650390625,
+          "vector_max": 0.7290191650390625,
+          "lexical_best": 0.0
+        },
+        {
+          "mitre_id": "T1550.003",
+          "name": "Pass the Ticket",
+          "hybrid_score": 0.7268029901716444,
+          "vector_max": 0.7212474346160889,
+          "lexical_best": 0.1111111111111111
+        }
+      ],
+      "top_techniques": [
+        {
+          "mitre_id": "T1021.004",
+          "name": "SSH",
+          "rationale": "The query explicitly describes using SSH for lateral movement. This technique involves logging into a remote machine using SSH, which is the direct application of using stolen SSH keys to access another system within the network. Threat actors like APT5 and Kinsing have been observed using SSH for lateral movement.",
+          "citations": [
+            "S1",
+            "S2",
+            "S3"
+          ]
+        },
+        {
+          "mitre_id": "T1552.004",
+          "name": "Private Keys",
+          "rationale": "The query specifies the use of 'stolen SSH keys'. This technique directly addresses the credential access aspect of obtaining private keys, such as SSH keys, which are then used for subsequent actions like lateral movement. The group Rocke has used stolen SSH private keys to spread malware across a network.",
+          "citations": [
+            "S7"
+          ]
+        }
+      ],
+      "alternatives": [
+        {
+          "mitre_id": "T1563.001",
+          "name": "SSH Hijacking",
+          "rationale": "This technique is an alternative method for using SSH for lateral movement. Instead of using stolen keys to create a new session, an adversary hijacks a legitimate user's active SSH session. This is plausible if the adversary gains access to a machine where a user is already connected to another system via SSH.",
+          "citations": [
+            "S4",
+            "S5"
+          ]
+        },
+        {
+          "mitre_id": "T1098.004",
+          "name": "SSH Authorized Keys",
+          "rationale": "While the query focuses on using existing stolen keys, an adversary who has stolen a private key might also modify the `.ssh/authorized_keys` file on a target system. This would allow them to establish persistence by adding their own public key, ensuring continued access even if the original stolen key is revoked.",
+          "citations": [
+            "S8",
+            "S9"
+          ]
+        },
+        {
+          "mitre_id": "T1550",
+          "name": "Use Alternate Authentication Material",
+          "rationale": "Stolen SSH keys are a form of 'alternate authentication material.' This technique is a broader parent category that encompasses using credentials other than cleartext passwords (like hashes, tickets, or in this case, keys) to bypass normal access controls and move laterally.",
+          "citations": [
+            "S14"
+          ]
+        }
+      ],
+      "summary": "The user's query describes an adversary using previously stolen SSH keys to move laterally to other systems in a network. The primary technique is the use of SSH for remote access. This action relies on having first acquired the necessary credentials, specifically private SSH keys. An alternative interpretation could involve hijacking an existing, active SSH session, although the query implies creating a new connection with stolen material.",
+      "citation_validation": {
+        "dropped": [],
+        "warnings": [
+          {
+            "entry": "top_techniques:'T1552.004'",
+            "reasons": [
+              "3 rationale sentences backed by only 1 citation(s)"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "Q5",
+      "text": "accessing the cloud admin console to rotate all credentials",
+      "retrieved_techniques": [
+        {
+          "mitre_id": "T1098.001",
+          "name": "Additional Cloud Credentials",
+          "hybrid_score": 0.7266715049743653,
+          "vector_max": 0.6766715049743652,
+          "lexical_best": 1.0
+        },
+        {
+          "mitre_id": "T1021.008",
+          "name": "Direct Cloud VM Connections",
+          "hybrid_score": 0.6791307489077251,
+          "vector_max": 0.6624640822410583,
+          "lexical_best": 0.3333333333333333
+        },
+        {
+          "mitre_id": "T1538",
+          "name": "Cloud Service Dashboard",
+          "hybrid_score": 0.6766301155090332,
+          "vector_max": 0.6703801155090332,
+          "lexical_best": 0.125
+        },
+        {
+          "mitre_id": "T1021.007",
+          "name": "Cloud Services",
+          "hybrid_score": 0.6726341875394185,
+          "vector_max": 0.6693008542060852,
+          "lexical_best": 0.06666666666666667
+        },
+        {
+          "mitre_id": "T1555.006",
+          "name": "Cloud Secrets Management Stores",
+          "hybrid_score": 0.6698519666989644,
+          "vector_max": 0.6615186333656311,
+          "lexical_best": 0.16666666666666666
+        },
+        {
+          "mitre_id": "T1136.003",
+          "name": "Cloud Account",
+          "hybrid_score": 0.6674449818474906,
+          "vector_max": 0.663873553276062,
+          "lexical_best": 0.07142857142857142
+        },
+        {
+          "mitre_id": "T1078.004",
+          "name": "Cloud Accounts",
+          "hybrid_score": 0.6663293838500977,
+          "vector_max": 0.6663293838500977,
+          "lexical_best": 0.0
+        },
+        {
+          "mitre_id": "T1098.003",
+          "name": "Additional Cloud Roles",
+          "hybrid_score": 0.6648646640777588,
+          "vector_max": 0.6598646640777588,
+          "lexical_best": 0.1
+        }
+      ],
+      "top_techniques": [
+        {
+          "mitre_id": "T1098.001",
+          "name": "Additional Cloud Credentials",
+          "rationale": "The query describes rotating credentials, which in an adversarial context, implies adding or modifying credentials to maintain persistent access. An adversary with access to a cloud admin console could add their own controlled credentials (like SSH keys, passwords, or x509 keys) to existing cloud accounts, service principals, or applications. This action allows them to retain access even if the original compromised credential is changed.",
+          "citations": [
+            "S1",
+            "S2"
+          ]
+        },
+        {
+          "mitre_id": "T1538",
+          "name": "Cloud Service Dashboard",
+          "rationale": "The user explicitly mentions using the \"cloud admin console,\" which is a graphical user interface (GUI) for managing a cloud environment. Adversaries can use stolen credentials to access these dashboards to perform actions like credential manipulation, rather than using APIs or command-line tools.",
+          "citations": [
+            "S6",
+            "S7"
+          ]
+        },
+        {
+          "mitre_id": "T1078.004",
+          "name": "Cloud Accounts",
+          "rationale": "Accessing a cloud admin console to perform administrative actions like rotating credentials requires the use of a valid, likely privileged, cloud account. This technique is a prerequisite for the described activity, as an adversary would first need to compromise or otherwise possess valid credentials to log in.",
+          "citations": [
+            "S15",
+            "S16"
+          ]
+        }
+      ],
+      "alternatives": [
+        {
+          "mitre_id": "T1136.003",
+          "name": "Cloud Account",
+          "rationale": "Instead of modifying existing credentials, an adversary with admin console access might create entirely new cloud accounts. This provides a separate, dedicated means of persistent access that might be less likely to be discovered than modifications to a known, legitimate account.",
+          "citations": [
+            "S12",
+            "S13",
+            "S14"
+          ]
+        },
+        {
+          "mitre_id": "T1098.003",
+          "name": "Additional Cloud Roles",
+          "rationale": "An adversary could 'rotate' credentials in a way that escalates their own privileges. After compromising an account, they could use the admin console to add powerful roles, such as global administrator, to their controlled account. This would grant them the ability to reset passwords for other admins and perform a wider range of malicious actions.",
+          "citations": [
+            "S17",
+            "S18",
+            "S19"
+          ]
+        },
+        {
+          "mitre_id": "T1021.007",
+          "name": "Cloud Services",
+          "rationale": "This technique describes the act of logging into cloud services, such as a web console or via a CLI, using valid accounts to perform management actions. Accessing the 'cloud admin console' is a specific instance of logging into and interacting with a cloud service.",
+          "citations": [
+            "S8",
+            "S9"
+          ]
+        }
+      ],
+      "summary": "The user's query describes an adversary who has gained access to a cloud environment's administrative console and is manipulating credentials. This action is likely aimed at establishing persistence by adding adversary-controlled credentials, potentially locking out legitimate administrators. The primary techniques involve using a compromised cloud account to access the cloud service dashboard and then modifying credentials. Alternatives include creating entirely new accounts or escalating the privileges of existing ones to achieve the same goal.",
+      "citation_validation": {
+        "dropped": [],
+        "warnings": []
+      }
+    }
+  ],
+  "top_techniques": [
+    {
+      "mitre_id": "T1566",
+      "name": "Phishing",
+      "rationale": "This technique directly describes the act of sending phishing messages through electronic delivery to gain access to victim systems. The user's query 'phishing email delivery' is the core concept of this technique. Phishing can be targeted (spearphishing) or non-targeted and may contain malicious links or attachments to execute code.",
+      "citations": [
+        "Q1:S1",
+        "Q1:S2"
+      ],
+      "from_part": "Q1"
+    },
+    {
+      "mitre_id": "T1566.001",
+      "name": "Spearphishing Attachment",
+      "rationale": "This is a specific method of phishing where an adversary sends a targeted email containing a malicious attachment. The goal is to have the user open the attachment, which then executes a payload on their system. This represents one of the primary ways a phishing email delivers its malicious content.",
+      "citations": [
+        "Q1:S10",
+        "Q1:S11"
+      ],
+      "from_part": "Q1"
+    },
+    {
+      "mitre_id": "T1566.002",
+      "name": "Spearphishing Link",
+      "rationale": "This is a specific method of phishing where an adversary sends a targeted email containing a malicious link. The goal is to entice the user to click the link, which leads to a site that either compromises the browser or prompts the user to download malicious content. This is another primary method for delivering a malicious payload via a phishing email.",
+      "citations": [
+        "Q1:S4",
+        "Q1:S5"
+      ],
+      "from_part": "Q1"
+    },
+    {
+      "mitre_id": "T1056.003",
+      "name": "Web Portal Capture",
+      "rationale": "This technique describes capturing user credentials by using a fake or compromised login page, which directly matches the user's query. Adversaries can install code on a portal to log credentials or create a fake login page to collect them. The Kimsuky group, for example, used a fake Google account login page for this purpose.",
+      "citations": [
+        "Q2:S1",
+        "Q2:S2",
+        "Q2:S3"
+      ],
+      "from_part": "Q2"
+    },
+    {
+      "mitre_id": "T1598.003",
+      "name": "Spearphishing Link",
+      "rationale": "This technique is the common delivery mechanism for a fake login page. Adversaries send targeted messages containing a malicious link that directs victims to a credential harvesting website, which is often a clone of a legitimate corporate login portal.",
+      "citations": [
+        "Q2:S4",
+        "Q2:S5",
+        "Q2:S6"
+      ],
+      "from_part": "Q2"
+    },
+    {
+      "mitre_id": "T1053.005",
+      "name": "Scheduled Task",
+      "rationale": "This technique specifically describes the abuse of the Windows Task Scheduler to execute malicious code on a recurring basis or at system startup for the purpose of persistence. The query directly mentions establishing persistence via a scheduled task, which aligns perfectly with this technique's description. Examples show threat actors like APT3 using the `schtasks` command-line utility to create tasks that run on logon, ensuring their malware persists.",
+      "citations": [
+        "Q3:S1",
+        "Q3:S3"
+      ],
+      "from_part": "Q3"
+    },
+    {
+      "mitre_id": "T1021.004",
+      "name": "SSH",
+      "rationale": "The query explicitly describes using SSH for lateral movement. This technique involves logging into a remote machine using SSH, which is the direct application of using stolen SSH keys to access another system within the network. Threat actors like APT5 and Kinsing have been observed using SSH for lateral movement.",
+      "citations": [
+        "Q4:S1",
+        "Q4:S2",
+        "Q4:S3"
+      ],
+      "from_part": "Q4"
+    },
+    {
+      "mitre_id": "T1552.004",
+      "name": "Private Keys",
+      "rationale": "The query specifies the use of 'stolen SSH keys'. This technique directly addresses the credential access aspect of obtaining private keys, such as SSH keys, which are then used for subsequent actions like lateral movement. The group Rocke has used stolen SSH private keys to spread malware across a network.",
+      "citations": [
+        "Q4:S7"
+      ],
+      "from_part": "Q4"
+    },
+    {
+      "mitre_id": "T1098.001",
+      "name": "Additional Cloud Credentials",
+      "rationale": "The query describes rotating credentials, which in an adversarial context, implies adding or modifying credentials to maintain persistent access. An adversary with access to a cloud admin console could add their own controlled credentials (like SSH keys, passwords, or x509 keys) to existing cloud accounts, service principals, or applications. This action allows them to retain access even if the original compromised credential is changed.",
+      "citations": [
+        "Q5:S1",
+        "Q5:S2"
+      ],
+      "from_part": "Q5"
+    },
+    {
+      "mitre_id": "T1538",
+      "name": "Cloud Service Dashboard",
+      "rationale": "The user explicitly mentions using the \"cloud admin console,\" which is a graphical user interface (GUI) for managing a cloud environment. Adversaries can use stolen credentials to access these dashboards to perform actions like credential manipulation, rather than using APIs or command-line tools.",
+      "citations": [
+        "Q5:S6",
+        "Q5:S7"
+      ],
+      "from_part": "Q5"
+    },
+    {
+      "mitre_id": "T1078.004",
+      "name": "Cloud Accounts",
+      "rationale": "Accessing a cloud admin console to perform administrative actions like rotating credentials requires the use of a valid, likely privileged, cloud account. This technique is a prerequisite for the described activity, as an adversary would first need to compromise or otherwise possess valid credentials to log in.",
+      "citations": [
+        "Q5:S15",
+        "Q5:S16"
+      ],
+      "from_part": "Q5"
+    }
+  ],
+  "alternatives": [
+    {
+      "mitre_id": "T1586.002",
+      "name": "Email Accounts",
+      "rationale": "Adversaries may compromise existing email accounts to send phishing emails. Using a compromised account, especially one known to the target, can increase the legitimacy of the phishing attempt and improve the chances of success. This technique represents acquiring the infrastructure needed for the delivery.",
+      "citations": [
+        "Q1:S7",
+        "Q1:S8",
+        "Q1:S9"
+      ],
+      "from_part": "Q1"
+    },
+    {
+      "mitre_id": "T1598",
+      "name": "Phishing for Information",
+      "rationale": "This technique describes sending phishing messages with the specific goal of eliciting sensitive information, such as credentials, rather than executing malicious code. While the query focuses on 'delivery,' this technique represents a common objective for such a delivery mechanism.",
+      "citations": [
+        "Q1:S22",
+        "Q1:S23"
+      ],
+      "from_part": "Q1"
+    },
+    {
+      "mitre_id": "T1585.002",
+      "name": "Email Accounts",
+      "rationale": "Adversaries may create new email accounts to use for phishing campaigns. This is a resource development technique that enables the 'phishing email delivery' described in the query by establishing the necessary infrastructure.",
+      "citations": [
+        "Q1:S19",
+        "Q1:S20",
+        "Q1:S21"
+      ],
+      "from_part": "Q1"
+    },
+    {
+      "mitre_id": "T1608.005",
+      "name": "Link Target",
+      "rationale": "This technique describes the setup of the infrastructure required for a fake login page attack. Adversaries clone legitimate sites, including login pages, and stage them as the destination for a malicious link used in a credential harvesting campaign.",
+      "citations": [
+        "Q2:S16",
+        "Q2:S17"
+      ],
+      "from_part": "Q2"
+    },
+    {
+      "mitre_id": "T1056.002",
+      "name": "GUI Input Capture",
+      "rationale": "This is an alternative method for credential harvesting that uses a fake prompt mimicking an operating system component rather than a web page. For example, an adversary might create a spoofed Windows Authentication prompt to collect credentials.",
+      "citations": [
+        "Q2:S7",
+        "Q2:S8",
+        "Q2:S9"
+      ],
+      "from_part": "Q2"
+    },
+    {
+      "mitre_id": "T1056",
+      "name": "Input Capture",
+      "rationale": "This is the parent technique for Web Portal Capture. It broadly covers methods of capturing user input to obtain credentials, including deceiving a user into providing input to what they believe is a genuine service, such as a fake login page.",
+      "citations": [
+        "Q2:S10",
+        "Q2:S11",
+        "Q2:S12"
+      ],
+      "from_part": "Q2"
+    },
+    {
+      "mitre_id": "T1053",
+      "name": "Scheduled Task/Job",
+      "rationale": "This is the parent technique for T1053.005 and covers the general abuse of task scheduling functionality across all major operating systems, not just Windows. It describes how adversaries use scheduled tasks to execute malicious code for persistence, often with elevated privileges. While the query is well-described by the Windows-specific sub-technique, this parent technique is a valid, broader alternative.",
+      "citations": [
+        "Q3:S4",
+        "Q3:S5"
+      ],
+      "from_part": "Q3"
+    },
+    {
+      "mitre_id": "T1563.001",
+      "name": "SSH Hijacking",
+      "rationale": "This technique is an alternative method for using SSH for lateral movement. Instead of using stolen keys to create a new session, an adversary hijacks a legitimate user's active SSH session. This is plausible if the adversary gains access to a machine where a user is already connected to another system via SSH.",
+      "citations": [
+        "Q4:S4",
+        "Q4:S5"
+      ],
+      "from_part": "Q4"
+    },
+    {
+      "mitre_id": "T1098.004",
+      "name": "SSH Authorized Keys",
+      "rationale": "While the query focuses on using existing stolen keys, an adversary who has stolen a private key might also modify the `.ssh/authorized_keys` file on a target system. This would allow them to establish persistence by adding their own public key, ensuring continued access even if the original stolen key is revoked.",
+      "citations": [
+        "Q4:S8",
+        "Q4:S9"
+      ],
+      "from_part": "Q4"
+    },
+    {
+      "mitre_id": "T1550",
+      "name": "Use Alternate Authentication Material",
+      "rationale": "Stolen SSH keys are a form of 'alternate authentication material.' This technique is a broader parent category that encompasses using credentials other than cleartext passwords (like hashes, tickets, or in this case, keys) to bypass normal access controls and move laterally.",
+      "citations": [
+        "Q4:S14"
+      ],
+      "from_part": "Q4"
+    },
+    {
+      "mitre_id": "T1136.003",
+      "name": "Cloud Account",
+      "rationale": "Instead of modifying existing credentials, an adversary with admin console access might create entirely new cloud accounts. This provides a separate, dedicated means of persistent access that might be less likely to be discovered than modifications to a known, legitimate account.",
+      "citations": [
+        "Q5:S12",
+        "Q5:S13",
+        "Q5:S14"
+      ],
+      "from_part": "Q5"
+    },
+    {
+      "mitre_id": "T1098.003",
+      "name": "Additional Cloud Roles",
+      "rationale": "An adversary could 'rotate' credentials in a way that escalates their own privileges. After compromising an account, they could use the admin console to add powerful roles, such as global administrator, to their controlled account. This would grant them the ability to reset passwords for other admins and perform a wider range of malicious actions.",
+      "citations": [
+        "Q5:S17",
+        "Q5:S18",
+        "Q5:S19"
+      ],
+      "from_part": "Q5"
+    },
+    {
+      "mitre_id": "T1021.007",
+      "name": "Cloud Services",
+      "rationale": "This technique describes the act of logging into cloud services, such as a web console or via a CLI, using valid accounts to perform management actions. Accessing the 'cloud admin console' is a specific instance of logging into and interacting with a cloud service.",
+      "citations": [
+        "Q5:S8",
+        "Q5:S9"
+      ],
+      "from_part": "Q5"
+    }
+  ],
+  "summary": "[Q1] The user's query describes the delivery of phishing emails, a common method for gaining initial access to a target environment. The primary technique is T1566 (Phishing), which involves sending electronically delivered social engineering messages. The payload is typically delivered via a malicious attachment (T1566.001) or a malicious link (T1566.002). To facilitate these campaigns, adversaries may acquire infrastructure by creating new email accounts (T1585.002) or compromising existing ones (T1586.002). [Q2] The user's query describes a credential harvesting attack using a fake login page. This is most accurately represented by Web Portal Capture (T1056.003), where an adversary uses a fraudulent web page to collect user credentials. This is often preceded by Spearphishing Link (T1598.003), which is the method used to deliver the link to the fake page to the victim. The infrastructure for this attack, such as cloning a legitimate login page, is covered by Link Target (T1608.005). [Q3] The user's query describes using a scheduled task to maintain access to a system, a common persistence mechanism. The most relevant technique is T1053.005 (Scheduled Task), which details how adversaries abuse the Windows Task Scheduler with tools like `schtasks` to execute malicious code repeatedly, such as at system startup or user logon. The parent technique, T1053 (Scheduled Task/Job), is also relevant as it covers the broader concept across different operating systems. [Q4] The user's query describes an adversary using previously stolen SSH keys to move laterally to other systems in a network. The primary technique is the use of SSH for remote access. This action relies on having first acquired the necessary credentials, specifically private SSH keys. An alternative interpretation could involve hijacking an existing, active SSH session, although the query implies creating a new connection with stolen material. [Q5] The user's query describes an adversary who has gained access to a cloud environment's administrative console and is manipulating credentials. This action is likely aimed at establishing persistence by adding adversary-controlled credentials, potentially locking out legitimate administrators. The primary techniques involve using a compromised cloud account to access the cloud service dashboard and then modifying credentials. Alternatives include creating entirely new accounts or escalating the privileges of existing ones to achieve the same goal.",
+  "citation_validation": {
+    "dropped": [],
+    "warnings": [
+      {
+        "entry": "Q4:top_techniques:'T1552.004'",
+        "reasons": [
+          "3 rationale sentences backed by only 1 citation(s)"
+        ]
+      }
+    ]
+  }
+}

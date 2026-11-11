@@ -1,0 +1,55 @@
+{
+  "plan_id": "PLAN_20261105_17_50_13",
+  "source_query": "On a Linux system (192.168.1.50, Ubuntu 20.04), discover SSH private keys in standard user locations (~/.ssh/id_rsa, ~/.ssh/id_ed25519, etc.) and parse the system's known_hosts file to identify possible target hosts. Then, use the discovered keys to establish an SSH connection to a specific target host (192.168.1.100) and execute a hardcoded verification command (echo 'access confirmed') to prove successful lateral movement. The entire operation runs as the current unprivileged user and must handle key permissions and SSH authentication cleanly without interactive prompts.",
+  "stage1_ref": "20261105_17_50_13.json",
+  "tasks": [
+    {
+      "task_id": "TASK_001",
+      "task_type": "credential_access",
+      "suggested_filename": "ssh_credential_discovery.py",
+      "description": "Scans the user's home directory for common SSH private key files (e.g., id_rsa, id_ed25519) and parses the ~/.ssh/known_hosts file to extract a list of potential remote hosts.",
+      "technique_ids": [
+        "T1552.004",
+        "T1018"
+      ],
+      "dependencies": [],
+      "provides": [
+        "SshCredentials",
+        "discover_ssh_credentials"
+      ],
+      "consumes": [],
+      "implementation_details": "Define a dataclass `SshCredentials` to hold `private_key_paths: list[str]` and `known_hosts: list[str]`. The main function will use `os.path.expanduser` to locate the `~/.ssh` directory. It will then use `os.listdir` or `glob` to find files matching common private key names (id_rsa, id_dsa, id_ecdsa, id_ed25519). For host discovery, it will read and parse `~/.ssh/known_hosts`, splitting lines on spaces and commas to extract hostnames/IPs, ignoring comments and hashed entries.",
+      "rag_retrieval_hints": [
+        "python find ssh private keys in home directory",
+        "python parse .ssh/known_hosts file",
+        "python os.path.expanduser and glob for file searching",
+        "python dataclass for storing credentials"
+      ]
+    },
+    {
+      "task_id": "TASK_002",
+      "task_type": "lateral_movement",
+      "suggested_filename": "ssh_lateral_movement.py",
+      "description": "Attempts to connect to a specified target host via SSH using a list of discovered private keys, executing a command upon successful authentication to verify access.",
+      "technique_ids": [
+        "T1021.004"
+      ],
+      "dependencies": [
+        "TASK_001"
+      ],
+      "provides": [
+        "execute_remote_ssh_command"
+      ],
+      "consumes": [
+        "SshCredentials"
+      ],
+      "implementation_details": "Use the 'paramiko' library for SSH client functionality. The main function will accept a target hostname, username, command, and an `SshCredentials` object. It will iterate through the `private_key_paths` provided. For each key, it will attempt a non-interactive connection, setting the client policy to `paramiko.AutoAddPolicy()` to avoid host key prompts. Upon successful connection, it will execute the command, capture stdout/stderr, close the connection, and return the result. It must handle `paramiko.AuthenticationException` and other connection errors gracefully.",
+      "rag_retrieval_hints": [
+        "python paramiko ssh connect with private key file non-interactive",
+        "paramiko execute remote command and get output",
+        "paramiko AutoAddPolicy example",
+        "python paramiko iterate through multiple private keys for authentication"
+      ]
+    }
+  ]
+}

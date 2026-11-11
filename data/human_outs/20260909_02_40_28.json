@@ -1,0 +1,554 @@
+{
+  "query": "I need you to write a Python script that connects to an external server on port 443, reads the contents of /etc/passwd and /etc/shadow files from the target machine, then sends them back over the connection using HTTP POST with JSON body format containing base64-encoded data.",
+  "decomposition": {
+    "decomposed": true,
+    "sub_queries": [
+      {
+        "id": "Q1",
+        "text": "connects to an external server on port 443"
+      },
+      {
+        "id": "Q2",
+        "text": "reads the contents of /etc/passwd and /etc/shadow files from the target machine"
+      },
+      {
+        "id": "Q3",
+        "text": "sends them back over the connection using HTTP POST with JSON body format containing base64-encoded data"
+      }
+    ],
+    "guardrails": {
+      "warnings": [],
+      "raw_decomposition_needed": true,
+      "fallback_used": false,
+      "fallback_reason": null
+    }
+  },
+  "parts": [
+    {
+      "id": "Q1",
+      "text": "connects to an external server on port 443",
+      "retrieved_techniques": [
+        {
+          "mitre_id": "T1048",
+          "name": "Exfiltration Over Alternative Protocol",
+          "hybrid_score": 0.7588252305984498,
+          "vector_max": 0.7088252305984497,
+          "lexical_best": 1.0
+        },
+        {
+          "mitre_id": "T1571",
+          "name": "Non-Standard Port",
+          "hybrid_score": 0.7445435762405396,
+          "vector_max": 0.7195435762405396,
+          "lexical_best": 0.5
+        },
+        {
+          "mitre_id": "T1133",
+          "name": "External Remote Services",
+          "hybrid_score": 0.7270948934555054,
+          "vector_max": 0.7220948934555054,
+          "lexical_best": 0.1
+        },
+        {
+          "mitre_id": "T1071.001",
+          "name": "Web Protocols",
+          "hybrid_score": 0.7227146778787885,
+          "vector_max": 0.7155718207359314,
+          "lexical_best": 0.14285714285714285
+        },
+        {
+          "mitre_id": "T1016.001",
+          "name": "Internet Connection Discovery",
+          "hybrid_score": 0.7152166366577148,
+          "vector_max": 0.7152166366577148,
+          "lexical_best": 0.0
+        },
+        {
+          "mitre_id": "T1090.002",
+          "name": "External Proxy",
+          "hybrid_score": 0.7016387144724529,
+          "vector_max": 0.6849720478057861,
+          "lexical_best": 0.3333333333333333
+        },
+        {
+          "mitre_id": "T1041",
+          "name": "Exfiltration Over C2 Channel",
+          "hybrid_score": 0.6702945550282796,
+          "vector_max": 0.6682112216949463,
+          "lexical_best": 0.041666666666666664
+        },
+        {
+          "mitre_id": "T1573.001",
+          "name": "Symmetric Cryptography",
+          "hybrid_score": 0.6668329278628031,
+          "vector_max": 0.6626662611961365,
+          "lexical_best": 0.08333333333333333
+        }
+      ],
+      "top_techniques": [
+        {
+          "mitre_id": "T1071.001",
+          "name": "Web Protocols",
+          "rationale": "Adversaries frequently use standard web protocols like HTTP and HTTPS for command and control (C2) communications. Connecting to an external server on port 443, the standard port for HTTPS, is a common way to blend malicious traffic with legitimate network activity, making it harder to detect. Several malware families, including BLINDINGCAN and LOWBALL, use HTTPS over port 443 for C2.",
+          "citations": [
+            "S9",
+            "S10",
+            "S11"
+          ]
+        },
+        {
+          "mitre_id": "T1048",
+          "name": "Exfiltration Over Alternative Protocol",
+          "rationale": "An outbound connection on port 443 can be used to exfiltrate stolen data. Adversaries may use a protocol like HTTPS on this port as a secondary channel, separate from their primary command and control channel, to transfer data out of the network. The Hydraq malware, for example, connects to a predefined domain on port 443 specifically to exfiltrate gathered information.",
+          "citations": [
+            "S1",
+            "S2"
+          ]
+        },
+        {
+          "mitre_id": "T1571",
+          "name": "Non-Standard Port",
+          "rationale": "While port 443 is the standard port for HTTPS, adversaries may use it to run a non-standard protocol to evade detection. For instance, malware like HARDRAIN and HOPLIGHT have used port 443 for FakeTLS communications, and Derusbi has used unencrypted HTTP over port 443 for C2. This tactic leverages the common allowance of port 443 in firewall rules while using a protocol that security tools might not expect.",
+          "citations": [
+            "S3",
+            "S4",
+            "S5"
+          ]
+        }
+      ],
+      "alternatives": [
+        {
+          "mitre_id": "T1133",
+          "name": "External Remote Services",
+          "rationale": "The connection could be to an external remote service, such as a VPN or SSH server, for initial access or persistence. Adversaries leverage these services to connect to internal network resources from an external location. For example, the Mafalda malware establishes an SSH connection from a compromised host to an external server.",
+          "citations": [
+            "S6",
+            "S7",
+            "S8"
+          ]
+        },
+        {
+          "mitre_id": "T1041",
+          "name": "Exfiltration Over C2 Channel",
+          "rationale": "If the connection on port 443 is part of an established command and control channel, it could be used to exfiltrate data. Unlike exfiltration over an alternative protocol, this technique involves sending stolen data through the same channel used for C2 communications. GoldenSpy exfiltrated host information to its C2 server, demonstrating this behavior.",
+          "citations": [
+            "S16"
+          ]
+        },
+        {
+          "mitre_id": "T1090.002",
+          "name": "External Proxy",
+          "rationale": "The external server could be a proxy used to relay communications to the actual command and control server. Adversaries use external proxies to hide the true destination of their C2 infrastructure and to add a layer of resilience to their operations. The compromised system communicates with the proxy, which then forwards the traffic.",
+          "citations": [
+            "S14",
+            "S15"
+          ]
+        }
+      ],
+      "summary": "An outbound connection to an external server on port 443 is a common behavior that can be associated with several malicious activities. The primary interpretation is the use of Web Protocols (T1071.001) for command and control, as this port is standard for HTTPS and allows traffic to blend in with legitimate web browsing. Alternatively, this connection could be for data exfiltration, either over a primary C2 channel (T1041) or a separate, alternative channel (T1048). It's also possible that a non-standard protocol is being used on this common port to bypass firewall restrictions (T1571). The context of the traffic, such as the protocol used and data volume, is crucial for distinguishing between these possibilities.",
+      "citation_validation": {
+        "dropped": [],
+        "warnings": [
+          {
+            "entry": "alternatives:'T1041'",
+            "reasons": [
+              "3 rationale sentences backed by only 1 citation(s)"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "Q2",
+      "text": "reads the contents of /etc/passwd and /etc/shadow files from the target machine",
+      "retrieved_techniques": [
+        {
+          "mitre_id": "T1003.008",
+          "name": "/etc/passwd and /etc/shadow",
+          "hybrid_score": 0.8546731352806092,
+          "vector_max": 0.8046731352806091,
+          "lexical_best": 1.0
+        },
+        {
+          "mitre_id": "T1087.001",
+          "name": "Local Account",
+          "hybrid_score": 0.7221299860212538,
+          "vector_max": 0.7165744304656982,
+          "lexical_best": 0.1111111111111111
+        },
+        {
+          "mitre_id": "T1556.003",
+          "name": "Pluggable Authentication Modules",
+          "hybrid_score": 0.7160391887029012,
+          "vector_max": 0.7077058553695679,
+          "lexical_best": 0.16666666666666666
+        },
+        {
+          "mitre_id": "T1552.001",
+          "name": "Credentials In Files",
+          "hybrid_score": 0.7130352258682251,
+          "vector_max": 0.7130352258682251,
+          "lexical_best": 0.0
+        },
+        {
+          "mitre_id": "T1003",
+          "name": "OS Credential Dumping",
+          "hybrid_score": 0.7096740007400513,
+          "vector_max": 0.7096740007400513,
+          "lexical_best": 0.0
+        },
+        {
+          "mitre_id": "T1003.007",
+          "name": "Proc Filesystem",
+          "hybrid_score": 0.7086105942726135,
+          "vector_max": 0.7086105942726135,
+          "lexical_best": 0.0
+        },
+        {
+          "mitre_id": "T1003.002",
+          "name": "Security Account Manager",
+          "hybrid_score": 0.7063549757003784,
+          "vector_max": 0.7063549757003784,
+          "lexical_best": 0.0
+        },
+        {
+          "mitre_id": "T1003.005",
+          "name": "Cached Domain Credentials",
+          "hybrid_score": 0.7035104036331177,
+          "vector_max": 0.7035104036331177,
+          "lexical_best": 0.0
+        }
+      ],
+      "top_techniques": [
+        {
+          "mitre_id": "T1003.008",
+          "name": "/etc/passwd and /etc/shadow",
+          "rationale": "The user query explicitly describes the core action of this technique: reading the `/etc/passwd` and `/etc/shadow` files. These files contain user account information and password hashes on Linux systems. The goal is typically to enable offline password cracking to obtain credentials.",
+          "citations": [
+            "S1",
+            "S2",
+            "S3"
+          ]
+        }
+      ],
+      "alternatives": [
+        {
+          "mitre_id": "T1003",
+          "name": "OS Credential Dumping",
+          "rationale": "This is the parent technique for T1003.008. Reading `/etc/passwd` and `/etc/shadow` is a specific method of dumping credentials from the operating system to obtain account login material, such as password hashes, for later use.",
+          "citations": [
+            "S10",
+            "S11"
+          ]
+        },
+        {
+          "mitre_id": "T1087.001",
+          "name": "Local Account",
+          "rationale": "Reading the `/etc/passwd` file is a known method for enumerating local user accounts on a Linux system. While the query also includes `/etc/shadow` (implying a goal beyond just enumeration), discovering local accounts is a direct outcome of this action.",
+          "citations": [
+            "S4",
+            "S5"
+          ]
+        },
+        {
+          "mitre_id": "T1552.001",
+          "name": "Credentials In Files",
+          "rationale": "This technique involves searching for credentials stored in files. The `/etc/shadow` file is a primary example of a system configuration file that contains credentials (in hashed form). An adversary reading this file is executing a form of this technique.",
+          "citations": [
+            "S8",
+            "S9"
+          ]
+        }
+      ],
+      "summary": "The described behavior of reading `/etc/passwd` and `/etc/shadow` directly corresponds to the credential dumping technique T1003.008. The tactical goal is to acquire user account information and password hashes for offline cracking, which can facilitate lateral movement or privilege escalation. This action is a specific sub-technique of the broader OS Credential Dumping tactic.",
+      "citation_validation": {
+        "dropped": [],
+        "warnings": []
+      }
+    },
+    {
+      "id": "Q3",
+      "text": "sends them back over the connection using HTTP POST with JSON body format containing base64-encoded data",
+      "retrieved_techniques": [
+        {
+          "mitre_id": "T1132.001",
+          "name": "Standard Encoding",
+          "hybrid_score": 0.7232286810874939,
+          "vector_max": 0.6732286810874939,
+          "lexical_best": 1.0
+        },
+        {
+          "mitre_id": "T1041",
+          "name": "Exfiltration Over C2 Channel",
+          "hybrid_score": 0.7100703954696655,
+          "vector_max": 0.6850703954696655,
+          "lexical_best": 0.5
+        },
+        {
+          "mitre_id": "T1132.002",
+          "name": "Non-Standard Encoding",
+          "hybrid_score": 0.6772153496742248,
+          "vector_max": 0.6647153496742249,
+          "lexical_best": 0.25
+        },
+        {
+          "mitre_id": "T1048",
+          "name": "Exfiltration Over Alternative Protocol",
+          "hybrid_score": 0.6676417589187622,
+          "vector_max": 0.6676417589187622,
+          "lexical_best": 0.0
+        },
+        {
+          "mitre_id": "T1071.001",
+          "name": "Web Protocols",
+          "hybrid_score": 0.6668255182412954,
+          "vector_max": 0.6629793643951416,
+          "lexical_best": 0.07692307692307693
+        },
+        {
+          "mitre_id": "T1560",
+          "name": "Archive Collected Data",
+          "hybrid_score": 0.6659296782811482,
+          "vector_max": 0.6625963449478149,
+          "lexical_best": 0.06666666666666667
+        },
+        {
+          "mitre_id": "T1567.004",
+          "name": "Exfiltration Over Webhook",
+          "hybrid_score": 0.6643909811973572,
+          "vector_max": 0.6643909811973572,
+          "lexical_best": 0.0
+        },
+        {
+          "mitre_id": "T1048.002",
+          "name": "Exfiltration Over Asymmetric Encrypted Non-C2 Protocol",
+          "hybrid_score": 0.6640692949295044,
+          "vector_max": 0.6640692949295044,
+          "lexical_best": 0.0
+        }
+      ],
+      "top_techniques": [
+        {
+          "mitre_id": "T1041",
+          "name": "Exfiltration Over C2 Channel",
+          "rationale": "The query describes sending data back over an established connection. This strongly implies exfiltration of collected information through the primary command and control (C2) channel. Several sources confirm this pattern, where malware sends base64-encoded data or JSON-formatted data to its C2 server via HTTP POST requests.",
+          "citations": [
+            "S4",
+            "S5",
+            "S6"
+          ]
+        },
+        {
+          "mitre_id": "T1132.001",
+          "name": "Standard Encoding",
+          "rationale": "The query explicitly states that the data is `base64-encoded`. Base64 is a standard encoding algorithm used to make data compatible with text-based protocols like HTTP. Adversaries use it to format C2 traffic, often within JSON payloads, to blend in with normal network activity.",
+          "citations": [
+            "S1",
+            "S2",
+            "S3",
+            "S4"
+          ]
+        },
+        {
+          "mitre_id": "T1071.001",
+          "name": "Web Protocols",
+          "rationale": "The use of `HTTP POST` is a direct application of this technique. Adversaries use common web protocols like HTTP and HTTPS for command and control communications because they are ubiquitous in enterprise environments and less likely to be blocked by firewalls.",
+          "citations": [
+            "S11",
+            "S12",
+            "S13",
+            "S5"
+          ]
+        }
+      ],
+      "alternatives": [
+        {
+          "mitre_id": "T1048",
+          "name": "Exfiltration Over Alternative Protocol",
+          "rationale": "If the HTTP POST connection is separate from the primary C2 channel, this technique would apply. Adversaries often use common protocols like HTTP for exfiltration specifically because it is distinct from their main C2, potentially to a different destination, to avoid detection.",
+          "citations": [
+            "S10"
+          ]
+        },
+        {
+          "mitre_id": "T1132.002",
+          "name": "Non-Standard Encoding",
+          "rationale": "While the query specifies Base64 (a standard encoding), adversaries frequently combine it with a non-standard scheme, such as a custom algorithm or XOR operation applied before the Base64 encoding. This is done to further obfuscate the C2 traffic and evade signature-based detection.",
+          "citations": [
+            "S7",
+            "S8",
+            "S9"
+          ]
+        },
+        {
+          "mitre_id": "T1560",
+          "name": "Archive Collected Data",
+          "rationale": "Before exfiltration, data is often collected and prepared for transmission. This preparation can include encrypting and encoding the data, such as with Base64, before it is sent to the C2 server. The encoding step mentioned in the query is often part of the data staging process.",
+          "citations": [
+            "S14",
+            "S15"
+          ]
+        }
+      ],
+      "summary": "The described behavior indicates an adversary is exfiltrating data over their primary command and control (C2) channel. The communication uses standard web protocols (HTTP POST) and data formats (JSON) to blend with legitimate traffic. The data itself is encoded with Base64, a common method for ensuring data integrity during transport and providing a light layer of obfuscation.",
+      "citation_validation": {
+        "dropped": [],
+        "warnings": []
+      }
+    }
+  ],
+  "top_techniques": [
+    {
+      "mitre_id": "T1071.001",
+      "name": "Web Protocols",
+      "rationale": "Adversaries frequently use standard web protocols like HTTP and HTTPS for command and control (C2) communications. Connecting to an external server on port 443, the standard port for HTTPS, is a common way to blend malicious traffic with legitimate network activity, making it harder to detect. Several malware families, including BLINDINGCAN and LOWBALL, use HTTPS over port 443 for C2.",
+      "citations": [
+        "Q1:S9",
+        "Q1:S10",
+        "Q1:S11"
+      ],
+      "from_part": "Q1"
+    },
+    {
+      "mitre_id": "T1048",
+      "name": "Exfiltration Over Alternative Protocol",
+      "rationale": "An outbound connection on port 443 can be used to exfiltrate stolen data. Adversaries may use a protocol like HTTPS on this port as a secondary channel, separate from their primary command and control channel, to transfer data out of the network. The Hydraq malware, for example, connects to a predefined domain on port 443 specifically to exfiltrate gathered information.",
+      "citations": [
+        "Q1:S1",
+        "Q1:S2"
+      ],
+      "from_part": "Q1"
+    },
+    {
+      "mitre_id": "T1571",
+      "name": "Non-Standard Port",
+      "rationale": "While port 443 is the standard port for HTTPS, adversaries may use it to run a non-standard protocol to evade detection. For instance, malware like HARDRAIN and HOPLIGHT have used port 443 for FakeTLS communications, and Derusbi has used unencrypted HTTP over port 443 for C2. This tactic leverages the common allowance of port 443 in firewall rules while using a protocol that security tools might not expect.",
+      "citations": [
+        "Q1:S3",
+        "Q1:S4",
+        "Q1:S5"
+      ],
+      "from_part": "Q1"
+    },
+    {
+      "mitre_id": "T1003.008",
+      "name": "/etc/passwd and /etc/shadow",
+      "rationale": "The user query explicitly describes the core action of this technique: reading the `/etc/passwd` and `/etc/shadow` files. These files contain user account information and password hashes on Linux systems. The goal is typically to enable offline password cracking to obtain credentials.",
+      "citations": [
+        "Q2:S1",
+        "Q2:S2",
+        "Q2:S3"
+      ],
+      "from_part": "Q2"
+    },
+    {
+      "mitre_id": "T1041",
+      "name": "Exfiltration Over C2 Channel",
+      "rationale": "The query describes sending data back over an established connection. This strongly implies exfiltration of collected information through the primary command and control (C2) channel. Several sources confirm this pattern, where malware sends base64-encoded data or JSON-formatted data to its C2 server via HTTP POST requests.",
+      "citations": [
+        "Q3:S4",
+        "Q3:S5",
+        "Q3:S6"
+      ],
+      "from_part": "Q3"
+    },
+    {
+      "mitre_id": "T1132.001",
+      "name": "Standard Encoding",
+      "rationale": "The query explicitly states that the data is `base64-encoded`. Base64 is a standard encoding algorithm used to make data compatible with text-based protocols like HTTP. Adversaries use it to format C2 traffic, often within JSON payloads, to blend in with normal network activity.",
+      "citations": [
+        "Q3:S1",
+        "Q3:S2",
+        "Q3:S3",
+        "Q3:S4"
+      ],
+      "from_part": "Q3"
+    }
+  ],
+  "alternatives": [
+    {
+      "mitre_id": "T1133",
+      "name": "External Remote Services",
+      "rationale": "The connection could be to an external remote service, such as a VPN or SSH server, for initial access or persistence. Adversaries leverage these services to connect to internal network resources from an external location. For example, the Mafalda malware establishes an SSH connection from a compromised host to an external server.",
+      "citations": [
+        "Q1:S6",
+        "Q1:S7",
+        "Q1:S8"
+      ],
+      "from_part": "Q1"
+    },
+    {
+      "mitre_id": "T1090.002",
+      "name": "External Proxy",
+      "rationale": "The external server could be a proxy used to relay communications to the actual command and control server. Adversaries use external proxies to hide the true destination of their C2 infrastructure and to add a layer of resilience to their operations. The compromised system communicates with the proxy, which then forwards the traffic.",
+      "citations": [
+        "Q1:S14",
+        "Q1:S15"
+      ],
+      "from_part": "Q1"
+    },
+    {
+      "mitre_id": "T1003",
+      "name": "OS Credential Dumping",
+      "rationale": "This is the parent technique for T1003.008. Reading `/etc/passwd` and `/etc/shadow` is a specific method of dumping credentials from the operating system to obtain account login material, such as password hashes, for later use.",
+      "citations": [
+        "Q2:S10",
+        "Q2:S11"
+      ],
+      "from_part": "Q2"
+    },
+    {
+      "mitre_id": "T1087.001",
+      "name": "Local Account",
+      "rationale": "Reading the `/etc/passwd` file is a known method for enumerating local user accounts on a Linux system. While the query also includes `/etc/shadow` (implying a goal beyond just enumeration), discovering local accounts is a direct outcome of this action.",
+      "citations": [
+        "Q2:S4",
+        "Q2:S5"
+      ],
+      "from_part": "Q2"
+    },
+    {
+      "mitre_id": "T1552.001",
+      "name": "Credentials In Files",
+      "rationale": "This technique involves searching for credentials stored in files. The `/etc/shadow` file is a primary example of a system configuration file that contains credentials (in hashed form). An adversary reading this file is executing a form of this technique.",
+      "citations": [
+        "Q2:S8",
+        "Q2:S9"
+      ],
+      "from_part": "Q2"
+    },
+    {
+      "mitre_id": "T1132.002",
+      "name": "Non-Standard Encoding",
+      "rationale": "While the query specifies Base64 (a standard encoding), adversaries frequently combine it with a non-standard scheme, such as a custom algorithm or XOR operation applied before the Base64 encoding. This is done to further obfuscate the C2 traffic and evade signature-based detection.",
+      "citations": [
+        "Q3:S7",
+        "Q3:S8",
+        "Q3:S9"
+      ],
+      "from_part": "Q3"
+    },
+    {
+      "mitre_id": "T1560",
+      "name": "Archive Collected Data",
+      "rationale": "Before exfiltration, data is often collected and prepared for transmission. This preparation can include encrypting and encoding the data, such as with Base64, before it is sent to the C2 server. The encoding step mentioned in the query is often part of the data staging process.",
+      "citations": [
+        "Q3:S14",
+        "Q3:S15"
+      ],
+      "from_part": "Q3"
+    }
+  ],
+  "summary": "[Q1] An outbound connection to an external server on port 443 is a common behavior that can be associated with several malicious activities. The primary interpretation is the use of Web Protocols (T1071.001) for command and control, as this port is standard for HTTPS and allows traffic to blend in with legitimate web browsing. Alternatively, this connection could be for data exfiltration, either over a primary C2 channel (T1041) or a separate, alternative channel (T1048). It's also possible that a non-standard protocol is being used on this common port to bypass firewall restrictions (T1571). The context of the traffic, such as the protocol used and data volume, is crucial for distinguishing between these possibilities. [Q2] The described behavior of reading `/etc/passwd` and `/etc/shadow` directly corresponds to the credential dumping technique T1003.008. The tactical goal is to acquire user account information and password hashes for offline cracking, which can facilitate lateral movement or privilege escalation. This action is a specific sub-technique of the broader OS Credential Dumping tactic. [Q3] The described behavior indicates an adversary is exfiltrating data over their primary command and control (C2) channel. The communication uses standard web protocols (HTTP POST) and data formats (JSON) to blend with legitimate traffic. The data itself is encoded with Base64, a common method for ensuring data integrity during transport and providing a light layer of obfuscation.",
+  "citation_validation": {
+    "dropped": [],
+    "warnings": [
+      {
+        "entry": "Q1:alternatives:'T1041'",
+        "reasons": [
+          "3 rationale sentences backed by only 1 citation(s)"
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,139 @@
+{
+  "plan_id": "PLAN_20261021_14_33_00",
+  "source_query": "Generate a reverse shell code, that opens a shell in 0.0.0.0 interface and port 5522 that i can connect from the outside lan my terminal and execute shell commands from my remote connection",
+  "stage1_ref": "20261021_14_33_00.json",
+  "tasks": [
+    {
+      "task_id": "TASK_001",
+      "task_type": "data_model",
+      "suggested_filename": "models.py",
+      "description": "Defines the ExecutionResult dataclass and configuration types for the reverse shell system.",
+      "technique_ids": [
+        "T1059.003",
+        "T1059.004"
+      ],
+      "dependencies": [],
+      "provides": [
+        "ExecutionResult",
+        "ReverseShellConfig"
+      ],
+      "consumes": [],
+      "implementation_details": "Uses Python dataclasses from the standard library to define ExecutionResult (containing command output, exit code, and error messages) and ReverseShellConfig (containing host, port, timeout, and shell type parameters). No external dependencies required.",
+      "rag_retrieval_hints": [
+        "python dataclass reverse shell execution result",
+        "python socket server configuration class"
+      ],
+      "scenario_context": {
+        "narrative_role": "This is the foundation layer of the attack chain. It establishes the shared data contract between all components, defining how execution results are structured and how configuration parameters flow through the system. Without this, TASK_002 and TASK_003 would need to re-implement their own result types, creating coupling and inconsistency across Unix/Windows implementations.",
+        "upstream_assumptions": "No upstream dependencies — this is the root of the dependency graph. Assumes only Python standard library is available (no external packages).",
+        "downstream_contract": "TASK_002 consumes ExecutionResult to capture command output from subprocess communication, and ReverseShellConfig to configure host/port/timeout/shell_type parameters for its TCP listener. TASK_003 similarly consumes both types. The ExecutionResult must support: stdout/stderr text capture, exit_code integer, error_message string. The ReverseShellConfig must expose: host (str), port (int), timeout (float), shell_type (str).",
+        "consistency_notes": "Use dataclasses from Python stdlib only. Keep field names snake_case. ExecutionResult should be immutable (frozen=True) since it represents a completed execution snapshot. ReverseShellConfig should use sensible defaults: host='0.0.0.0', port=5522, timeout=30.0, shell_type='bash' for Unix and 'cmd.exe' for Windows.",
+        "non_goals": "Do NOT implement any socket logic here — that belongs to TASK_002/TASK_003. Do NOT include command parsing or subprocess spawning logic. Do NOT handle network I/O or signal handling. This task is purely a data schema definition."
+      }
+    },
+    {
+      "task_id": "TASK_002",
+      "task_type": "execution_hook",
+      "suggested_filename": "unix_reverse_shell.py",
+      "description": "Implements a Unix reverse shell listener that spawns a subprocess to execute remote commands via socket communication.",
+      "technique_ids": [
+        "T1059.004"
+      ],
+      "dependencies": [
+        "TASK_001"
+      ],
+      "provides": [
+        "UnixReverseShell",
+        "UnixReverseShellListener"
+      ],
+      "consumes": [
+        "ExecutionResult",
+        "ReverseShellConfig"
+      ],
+      "implementation_details": "Uses the socket module to create a TCP server listening on 0.0.0.0:5522. When a client connects, it spawns a subprocess using subprocess.Popen with shell=True, piping stdin/stdout/stderr through the socket connection. Uses select.select() for non-blocking I/O multiplexing between the listener socket and the child process file descriptors. Implements command parsing by reading from the connected client's stdin and writing output to their stdout.",
+      "rag_retrieval_hints": [
+        "python socket server reverse shell subprocess",
+        "python select multiplexing socket nonblocking"
+      ],
+      "scenario_context": {
+        "narrative_role": "This implements the Unix-specific execution hook — the actual listener that accepts incoming connections and spawns shell processes on Unix-like systems. It bridges the gap between the network socket (TASK_004's accept loop) and command execution, handling platform-specific process spawning via subprocess.Popen with proper file descriptor redirection.",
+        "upstream_assumptions": "Assumes ExecutionResult dataclass exists from TASK_001 to capture output. Assumes ReverseShellConfig is instantiated with host='0.0.0.0', port=5522, timeout=30.0, shell_type='bash'. Can assume select.select() and subprocess module are available in the environment.",
+        "downstream_contract": "TASK_004 (orchestrator) instantiates UnixReverseShellListener with a ReverseShellConfig instance and expects it to be callable as a server that accepts connections on 0.0.0.0:5522. The listener must return ExecutionResult objects for each connected client's command execution. It should raise or report errors if the socket bind fails or subprocess spawning fails.",
+        "consistency_notes": "Must use select.select() for non-blocking I/O multiplexing between the listening socket and child process file descriptors (stdin, stdout, stderr). Must handle SIGINT/SIGTERM gracefully by closing sockets and terminating child processes. The shell_type parameter should map to 'bash' or 'sh' based on config. Output must be line-buffered and sent back through the same socket connection.",
+        "non_goals": "Do NOT implement Windows-specific process spawning (that's TASK_003). Do NOT handle CLI argument parsing — that belongs in TASK_004. Do NOT implement a main() loop for accepting connections; TASK_004 handles the accept/loop pattern. Focus only on the listener class implementation."
+      }
+    },
+    {
+      "task_id": "TASK_003",
+      "task_type": "execution_hook",
+      "suggested_filename": "windows_reverse_shell.py",
+      "description": "Implements a Windows reverse shell listener that spawns cmd.exe or powershell to execute remote commands.",
+      "technique_ids": [
+        "T1059.003"
+      ],
+      "dependencies": [
+        "TASK_001"
+      ],
+      "provides": [
+        "WindowsReverseShell",
+        "WindowsReverseShellListener"
+      ],
+      "consumes": [
+        "ExecutionResult",
+        "ReverseShellConfig"
+      ],
+      "implementation_details": "Uses the socket module for TCP server on 0.0.0.0:5522. On Windows, uses subprocess.Popen with creationflags=subprocess.CREATE_NEW_PROCESS_GROUP and shell=True to spawn cmd.exe or powershell.exe as a child process. Pipes stdin/stdout/stderr through the socket connection using os.dup2() to redirect file descriptors. Handles Windows-specific considerations like console mode vs pseudo-console mode.",
+      "rag_retrieval_hints": [
+        "python windows reverse shell subprocess create_new_process_group",
+        "python socket server cmd.exe reverse shell"
+      ],
+      "scenario_context": {
+        "narrative_role": "This implements the Windows-specific execution hook, adapting the reverse shell concept to Windows process model constraints. It must handle Windows-specific considerations like CREATE_NEW_PROCESS_GROUP for console detachment and proper file descriptor redirection using os.dup2() since Windows subprocesses don't inherit Unix-style fd inheritance.",
+        "upstream_assumptions": "Assumes ExecutionResult dataclass exists from TASK_001. Assumes ReverseShellConfig is instantiated with host='0.0.0.0', port=5522, timeout=30.0, shell_type='cmd.exe' (or 'powershell.exe'). Can assume os.dup2() and subprocess.CREATE_NEW_PROCESS_GROUP are available.",
+        "downstream_contract": "TASK_004 (orchestrator) instantiates WindowsReverseShellListener with a ReverseShellConfig instance and expects it to be callable as a server accepting connections on 0.0.0.0:5522. Must return ExecutionResult objects for each connected client's command execution. Should handle Windows-specific edge cases like console mode detection.",
+        "consistency_notes": "Must use os.dup2() to redirect stdin/stdout/stderr of the child process to the socket file descriptors (fileno 3, 4, 5). Must spawn cmd.exe or powershell.exe with shell=True and CREATE_NEW_PROCESS_GROUP flag. The shell_type parameter should map to 'cmd.exe' by default on Windows. Output must be line-buffered through the same socket connection.",
+        "non_goals": "Do NOT implement Unix-specific select.select() multiplexing — that's TASK_002's domain. Do NOT handle CLI argument parsing — that belongs in TASK_004. Do NOT implement a main() loop for accepting connections; TASK_004 handles the accept/loop pattern. Focus only on Windows process spawning and fd redirection."
+      }
+    },
+    {
+      "task_id": "TASK_004",
+      "task_type": "orchestrator_test",
+      "suggested_filename": "__main__.py",
+      "description": "Main orchestrator that wires together the Unix and Windows reverse shell components, handles CLI argument parsing, and provides the entry point for execution.",
+      "technique_ids": [
+        "T1059.003",
+        "T1059.004",
+        "T1133"
+      ],
+      "dependencies": [
+        "TASK_001",
+        "TASK_002",
+        "TASK_003"
+      ],
+      "provides": [
+        "main",
+        "create_reverse_shell_server",
+        "run_unix_listener",
+        "run_windows_listener"
+      ],
+      "consumes": [
+        "ExecutionResult",
+        "ReverseShellConfig",
+        "UnixReverseShellListener",
+        "WindowsReverseShellListener"
+      ],
+      "implementation_details": "Uses argparse for CLI argument parsing (host, port, shell_type). Instantiates the appropriate listener class based on the selected platform. Implements a main loop that accepts incoming connections and spawns subprocesses for each connected client. Handles graceful shutdown via signal handlers. The UnixReverseShellListener is instantiated with ReverseShellConfig containing host='0.0.0.0', port=5522, timeout=30.",
+      "rag_retrieval_hints": [
+        "python argparse cli argument parsing reverse shell",
+        "python socket server main loop accept connections"
+      ],
+      "scenario_context": {
+        "narrative_role": "This is the orchestrator — the entry point that wires all components together, exposes a CLI interface for configuration, and provides the main execution loop. It's the 'main.py' equivalent that ties the data model (TASK_001), Unix listener (TASK_002), and Windows listener (TASK_003) into a cohesive system that can be run from command line.",
+        "upstream_assumptions": "Assumes ExecutionResult, ReverseShellConfig, UnixReverseShellListener, and WindowsReverseShellListener classes exist and are importable. Assumes argparse is available for CLI parsing. Assumes signal module is available for graceful shutdown handling.",
+        "downstream_contract": "This task has no downstream consumers in the plan — it IS the entry point. It should be runnable as `python __main__.py` or `python -m reverse_shell`. It must expose --help output showing all options (host, port, shell_type, platform). Must handle KeyboardInterrupt and SIGINT/SIGTERM for clean shutdown.",
+        "consistency_notes": "Must use argparse with subparsers or a single parser with mutually exclusive groups to choose between Unix/Windows mode. The host default MUST be '0.0.0.0' and port MUST be 5522 as per the source query. Must implement signal handlers for SIGINT (Ctrl+C) that gracefully close sockets and terminate child processes before exiting.",
+        "non_goals": "Do NOT re-implement socket server logic — delegate to TASK_002/TASK_003 listener classes. Do NOT define dataclasses or type hints — those belong in TASK_001. Do NOT implement the actual subprocess spawning or fd redirection — that belongs in the respective listener tasks. This task is purely orchestration and CLI exposure."
+      }
+    }
+  ]
+}

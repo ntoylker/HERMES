@@ -1,0 +1,25 @@
+{
+  "schema_version": "2.0",
+  "environment": "isolated_research_sandbox",
+  "target_language": "python",
+  "min_python_version": "3.11",
+  "allowed_task_types": [
+    "reconnaissance",
+    "initial_access",
+    "execution_hook",
+    "persistence",
+    "privilege_escalation",
+    "defense_evasion",
+    "credential_access",
+    "discovery",
+    "lateral_movement",
+    "collection",
+    "c2_transport",
+    "exfiltration",
+    "impact",
+    "payload_staging",
+    "data_model",
+    "utility",
+    "orchestrator_test"
+  ]
+}

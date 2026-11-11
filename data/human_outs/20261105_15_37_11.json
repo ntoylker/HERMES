@@ -1,0 +1,196 @@
+{
+  "query": "Generate a Linux reverse shell code, that\nconnects back out to my machine on \nport 5522, so i can get a shell on it from my terminal and \nexecute shell commands through that remote connection",
+  "decomposition": {
+    "decomposed": false,
+    "sub_queries": [
+      {
+        "id": "Q1",
+        "text": "Generate a Linux reverse shell code, that\nconnects back out to my machine on \nport 5522, so i can get a shell on it from my terminal and \nexecute shell commands through that remote connection"
+      }
+    ],
+    "guardrails": {
+      "warnings": [],
+      "raw_decomposition_needed": false,
+      "fallback_used": false,
+      "fallback_reason": null
+    }
+  },
+  "parts": [
+    {
+      "id": "Q1",
+      "text": "Generate a Linux reverse shell code, that\nconnects back out to my machine on \nport 5522, so i can get a shell on it from my terminal and \nexecute shell commands through that remote connection",
+      "retrieved_techniques": [
+        {
+          "mitre_id": "T1059.003",
+          "name": "Windows Command Shell",
+          "hybrid_score": 0.6967970609664917,
+          "vector_max": 0.6467970609664917,
+          "lexical_best": 1.0
+        },
+        {
+          "mitre_id": "T1059.004",
+          "name": "Unix Shell",
+          "hybrid_score": 0.6899289846420288,
+          "vector_max": 0.6836789846420288,
+          "lexical_best": 0.125
+        },
+        {
+          "mitre_id": "T1546.004",
+          "name": "Unix Shell Configuration Modification",
+          "hybrid_score": 0.6658493433679853,
+          "vector_max": 0.6587064862251282,
+          "lexical_best": 0.14285714285714285
+        },
+        {
+          "mitre_id": "T1059",
+          "name": "Command and Scripting Interpreter",
+          "hybrid_score": 0.6586021184921265,
+          "vector_max": 0.6586021184921265,
+          "lexical_best": 0.0
+        },
+        {
+          "mitre_id": "T1546.005",
+          "name": "Trap",
+          "hybrid_score": 0.6514298319816589,
+          "vector_max": 0.6514298319816589,
+          "lexical_best": 0.0
+        },
+        {
+          "mitre_id": "T1552.003",
+          "name": "Shell History",
+          "hybrid_score": 0.6501679579416911,
+          "vector_max": 0.6335012912750244,
+          "lexical_best": 0.3333333333333333
+        },
+        {
+          "mitre_id": "T1055.008",
+          "name": "Ptrace System Calls",
+          "hybrid_score": 0.6446464657783508,
+          "vector_max": 0.6446464657783508,
+          "lexical_best": 0.0
+        },
+        {
+          "mitre_id": "T1205.002",
+          "name": "Socket Filters",
+          "hybrid_score": 0.6430882215499878,
+          "vector_max": 0.6430882215499878,
+          "lexical_best": 0.0
+        }
+      ],
+      "top_techniques": [
+        {
+          "mitre_id": "T1059.004",
+          "name": "Unix Shell",
+          "rationale": "The user is explicitly asking to generate code for a 'Linux reverse shell' which allows them to 'execute shell commands'. This directly involves abusing a Unix shell, such as bash, to establish a command and control channel. Adversaries use Unix shells to execute commands and create reverse shells for remote access.",
+          "citations": [
+            "S4",
+            "S5",
+            "S6"
+          ]
+        },
+        {
+          "mitre_id": "T1059",
+          "name": "Command and Scripting Interpreter",
+          "rationale": "A reverse shell is a quintessential example of using a command and scripting interpreter for execution and command and control. The query specifies a 'Linux reverse shell' to 'execute shell commands', which is a direct use of a system's built-in interpreter to run adversary-controlled commands. Various malware families use this technique to create reverse shells.",
+          "citations": [
+            "S10",
+            "S11",
+            "S12"
+          ]
+        }
+      ],
+      "alternatives": [
+        {
+          "mitre_id": "T1059.003",
+          "name": "Windows Command Shell",
+          "rationale": "While the user specified a 'Linux' shell, this technique is the Windows equivalent and is frequently used by malware to create reverse shells. For example, HTTPTroy and BACKSPACE can generate reverse shells using the command line, demonstrating the broader concept of using native command interpreters for this purpose.",
+          "citations": [
+            "S1",
+            "S3"
+          ]
+        },
+        {
+          "mitre_id": "T1546.004",
+          "name": "Unix Shell Configuration Modification",
+          "rationale": "An adversary could place the reverse shell code requested by the user into a shell configuration file (e.g., .bashrc, /etc/profile). This would establish persistence by triggering the reverse shell whenever a new shell session is initiated, such as during user login. The technique explicitly mentions using interactive and reverse shells.",
+          "citations": [
+            "S7",
+            "S8",
+            "S9"
+          ]
+        },
+        {
+          "mitre_id": "T1205.002",
+          "name": "Socket Filters",
+          "rationale": "An adversary could use a socket filter as a trigger mechanism for the reverse shell. A specially crafted packet sent to the target machine could match the filter's criteria and activate the reverse shell, providing a stealthier method for persistence and command and control.",
+          "citations": [
+            "S16",
+            "S17"
+          ]
+        }
+      ],
+      "summary": "The user is requesting code to create a reverse shell on a Linux system. This involves using a Unix shell to initiate an outbound connection to an attacker-controlled machine, providing remote command execution capabilities. This is a common method for establishing command and control.",
+      "citation_validation": {
+        "dropped": [],
+        "warnings": []
+      }
+    }
+  ],
+  "top_techniques": [
+    {
+      "mitre_id": "T1059.004",
+      "name": "Unix Shell",
+      "rationale": "The user is explicitly asking to generate code for a 'Linux reverse shell' which allows them to 'execute shell commands'. This directly involves abusing a Unix shell, such as bash, to establish a command and control channel. Adversaries use Unix shells to execute commands and create reverse shells for remote access.",
+      "citations": [
+        "S4",
+        "S5",
+        "S6"
+      ]
+    },
+    {
+      "mitre_id": "T1059",
+      "name": "Command and Scripting Interpreter",
+      "rationale": "A reverse shell is a quintessential example of using a command and scripting interpreter for execution and command and control. The query specifies a 'Linux reverse shell' to 'execute shell commands', which is a direct use of a system's built-in interpreter to run adversary-controlled commands. Various malware families use this technique to create reverse shells.",
+      "citations": [
+        "S10",
+        "S11",
+        "S12"
+      ]
+    }
+  ],
+  "alternatives": [
+    {
+      "mitre_id": "T1059.003",
+      "name": "Windows Command Shell",
+      "rationale": "While the user specified a 'Linux' shell, this technique is the Windows equivalent and is frequently used by malware to create reverse shells. For example, HTTPTroy and BACKSPACE can generate reverse shells using the command line, demonstrating the broader concept of using native command interpreters for this purpose.",
+      "citations": [
+        "S1",
+        "S3"
+      ]
+    },
+    {
+      "mitre_id": "T1546.004",
+      "name": "Unix Shell Configuration Modification",
+      "rationale": "An adversary could place the reverse shell code requested by the user into a shell configuration file (e.g., .bashrc, /etc/profile). This would establish persistence by triggering the reverse shell whenever a new shell session is initiated, such as during user login. The technique explicitly mentions using interactive and reverse shells.",
+      "citations": [
+        "S7",
+        "S8",
+        "S9"
+      ]
+    },
+    {
+      "mitre_id": "T1205.002",
+      "name": "Socket Filters",
+      "rationale": "An adversary could use a socket filter as a trigger mechanism for the reverse shell. A specially crafted packet sent to the target machine could match the filter's criteria and activate the reverse shell, providing a stealthier method for persistence and command and control.",
+      "citations": [
+        "S16",
+        "S17"
+      ]
+    }
+  ],
+  "summary": "The user is requesting code to create a reverse shell on a Linux system. This involves using a Unix shell to initiate an outbound connection to an attacker-controlled machine, providing remote command execution capabilities. This is a common method for establishing command and control.",
+  "citation_validation": {
+    "dropped": [],
+    "warnings": []
+  }
+}

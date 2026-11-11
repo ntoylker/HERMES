@@ -1,0 +1,151 @@
+{
+  "plan_id": "PLAN_20260917_11_33_56",
+  "source_query": "Generate a reverse shell code, that opens a shell in 0.0.0.0 interface and port 5522 that i can connect from the outside lan my terminal and execute shell commands from my remote connection",
+  "stage1_ref": "20260917_11_33_56.json",
+  "tasks": [
+    {
+      "task_id": "TASK_001",
+      "task_type": "data_model",
+      "suggested_filename": "shell_result.py",
+      "description": "Defines the data model for shell command execution results, including captured output, exit codes, and metadata.",
+      "technique_ids": [
+        "T1059",
+        "T1059.003",
+        "T1059.004"
+      ],
+      "dependencies": [],
+      "provides": [
+        "ExecutionResult",
+        "ShellCommand",
+        "ConnectionInfo"
+      ],
+      "consumes": [],
+      "implementation_details": "Uses Python dataclasses to define ExecutionResult (stdout, stderr, return_code, duration_ms), ShellCommand (command string, timeout_seconds), and ConnectionInfo (host, port, protocol). No external dependencies required.",
+      "rag_retrieval_hints": [
+        "python dataclass execution result pattern",
+        "dataclasses stdout stderr capture"
+      ],
+      "scenario_context": {
+        "narrative_role": "Foundational data layer of the reverse shell attack chain. This module defines the schema for all command execution results, connection metadata, and process state that flows through the entire system. It serves as the single source of truth for how execution results are structured across both Unix and Windows implementations.",
+        "upstream_assumptions": "No upstream dependencies exist; this is the root data model layer. Assumes no prior context needed — it defines the primitives from which all other components derive their interfaces.",
+        "downstream_contract": "TASK_002 (shell_utils) consumes ExecutionResult, ShellCommand, and ConnectionInfo to build spawn/capture utilities. TASK_003 and TASK_004 both consume these same types as parameters for their RemoteConnectionHandler classes. The contract requires that all execution results include stdout/stderr capture, return_code, duration_ms, and a consistent ConnectionInfo structure with host/port/protocol fields.",
+        "consistency_notes": "Use Python dataclasses with frozen=True for immutability where appropriate. All timestamps should be in milliseconds since epoch. Exit codes must be integers (0-255 range). Protocol field must always be 'tcp' regardless of OS variant. Duration_ms must include both command execution time and I/O transfer overhead.",
+        "non_goals": "Do NOT implement any socket or network logic here — that belongs to TASK_003/TASK_004. Do NOT implement process spawning — that belongs to TASK_002. Do NOT add validation or error handling beyond basic type hints; those belong in the utility layer (TASK_002). Do not include any OS-specific path separators or command syntax variations."
+      }
+    },
+    {
+      "task_id": "TASK_002",
+      "task_type": "utility",
+      "suggested_filename": "shell_utils.py",
+      "description": "Provides utility functions for spawning shell processes, capturing output streams, and managing connection state.",
+      "technique_ids": [
+        "T1059",
+        "T1059.003",
+        "T1059.004"
+      ],
+      "dependencies": [
+        "TASK_001"
+      ],
+      "provides": [
+        "spawn_shell_process",
+        "capture_output_stream",
+        "parse_command_args",
+        "validate_connection_info"
+      ],
+      "consumes": [
+        "ExecutionResult",
+        "ShellCommand",
+        "ConnectionInfo"
+      ],
+      "implementation_details": "Uses subprocess module to spawn shell processes with Popen, captures stdout/stderr via communicate(), implements timeout handling and signal management. parse_command_args uses shlex.split() for safe argument parsing.",
+      "rag_retrieval_hints": [
+        "python subprocess.Popen capture output",
+        "subprocess communicate nonblocking"
+      ],
+      "scenario_context": {
+        "narrative_role": "Core process orchestration and I/O capture engine. This module bridges the gap between abstract data models and actual system processes, providing reusable utilities that both Unix and Windows implementations depend on. It is the shared infrastructure layer that enables cross-platform compatibility in command execution.",
+        "upstream_assumptions": "Assumes ExecutionResult, ShellCommand, and ConnectionInfo classes are already defined by TASK_001. Can assume these dataclasses exist as importable types. Assumes no external dependencies beyond Python stdlib (subprocess, shlex, threading).",
+        "downstream_contract": "TASK_003 consumes spawn_shell_process() for Unix shell spawning and capture_output_stream() for I/O handling. TASK_004 consumes the same functions but with Windows-specific process creation flags. The contract requires that spawn_shell_process returns a Popen object (Unix) or subprocess.Popen wrapper (Windows), and capture_output_stream must handle both blocking and non-blocking modes with configurable timeouts.",
+        "consistency_notes": "All spawned processes must use the same timeout semantics defined in ShellCommand.timeout_seconds. Signal handling for process termination must be consistent across platforms — on Unix, use SIGTERM followed by SIGKILL after timeout; on Windows, use subprocess.terminate() then wait(timeout=1). Output capture must preserve line endings and not strip trailing newlines from stdout/stderr.",
+        "non_goals": "Do NOT implement the TCP server socket logic — that belongs to TASK_003/TASK_004. Do NOT implement command parsing or argument splitting beyond basic shlex.split() — keep it as a utility, not a feature. Do NOT handle connection acceptance or remote client logic — those are transport responsibilities of TASK_003 and TASK_004."
+      }
+    },
+    {
+      "task_id": "TASK_003",
+      "task_type": "c2_transport",
+      "suggested_filename": "reverse_shell_server.py",
+      "description": "Implements the main reverse shell server that listens on 0.0.0.0:5522 and handles incoming remote connections, executing commands via Unix shell.",
+      "technique_ids": [
+        "T1059",
+        "T1059.004",
+        "T1133"
+      ],
+      "dependencies": [
+        "TASK_001",
+        "TASK_002"
+      ],
+      "provides": [
+        "ReverseShellServer",
+        "RemoteConnectionHandler",
+        "CommandExecutor"
+      ],
+      "consumes": [
+        "ExecutionResult",
+        "ShellCommand",
+        "ConnectionInfo",
+        "spawn_shell_process",
+        "capture_output_stream"
+      ],
+      "implementation_details": "Uses socket module to create a TCP server bound to 0.0.0.0:5522. Implements RemoteConnectionHandler class that accepts incoming connections, spawns a shell process via spawn_shell_process(), captures output via capture_output_stream(), and sends results back over the socket. Uses threading for concurrent connection handling.",
+      "rag_retrieval_hints": [
+        "python socket server accept client connections",
+        "python multi-threaded socket server example"
+      ],
+      "scenario_context": {
+        "narrative_role": "Unix/Linux reverse shell server implementation that listens on 0.0.0.0:5522 for incoming TCP connections from remote attackers. This is the primary C2 transport component for Unix-based targets, handling the full lifecycle of accepting a connection, spawning a shell process, capturing output, and streaming results back to the client.",
+        "upstream_assumptions": "Assumes ExecutionResult, ShellCommand, ConnectionInfo are defined by TASK_001. Assumes spawn_shell_process() and capture_output_stream() utilities exist from TASK_002. Can assume socket module is available in stdlib. Assumes threading module for concurrent connection handling.",
+        "downstream_contract": "No downstream tasks consume this directly — it is a leaf implementation task. However, its output (the running ReverseShellServer instance) conceptually satisfies the 'c2_transport' contract of the overall attack chain: accepting connections on 0.0.0.0:5522 and enabling remote command execution.",
+        "consistency_notes": "Must bind to exactly 0.0.0.0:5522 as specified in source query. Must handle multiple concurrent clients via threading (one thread per accepted connection). Must implement a graceful shutdown mechanism that closes all client sockets when the server receives SIGINT/SIGTERM. Output streaming must be line-buffered for interactive shell experience.",
+        "non_goals": "Do NOT implement Windows-specific process spawning — that belongs to TASK_004. Do NOT implement the WindowsCommandExecutor class — that's a separate implementation variant. Do not add authentication or encryption features unless explicitly in scope (keep it as a plain reverse shell). Do not implement logging beyond basic print statements for debugging."
+      }
+    },
+    {
+      "task_id": "TASK_004",
+      "task_type": "c2_transport",
+      "suggested_filename": "windows_reverse_shell_server.py",
+      "description": "Implements the Windows Command Shell reverse shell server that listens on 0.0.0.0:5522 and handles incoming remote connections, executing commands via cmd.exe.",
+      "technique_ids": [
+        "T1059",
+        "T1059.003"
+      ],
+      "dependencies": [
+        "TASK_001",
+        "TASK_002"
+      ],
+      "provides": [
+        "WindowsReverseShellServer",
+        "WindowsRemoteConnectionHandler",
+        "WindowsCommandExecutor"
+      ],
+      "consumes": [
+        "ExecutionResult",
+        "ShellCommand",
+        "ConnectionInfo",
+        "spawn_shell_process",
+        "capture_output_stream"
+      ],
+      "implementation_details": "Uses subprocess module with creationflags=subprocess.CREATE_NEW_CONSOLE and shell=True to spawn cmd.exe. Implements WindowsRemoteConnectionHandler class that accepts incoming connections, spawns a cmd.exe process via spawn_shell_process(), captures output via capture_output_stream(), and sends results back over the socket. Uses threading for concurrent connection handling.",
+      "rag_retrieval_hints": [
+        "python subprocess CREATE_NEW_CONSOLE",
+        "python subprocess shell=True cmd.exe"
+      ],
+      "scenario_context": {
+        "narrative_role": "Windows-specific reverse shell server implementation that mirrors TASK_003's interface but uses Windows process creation semantics. It listens on the same port (0.0.0.0:5522) and provides the same remote command execution capability, but spawns cmd.exe instead of /bin/sh or bash.",
+        "upstream_assumptions": "Assumes ExecutionResult, ShellCommand, ConnectionInfo are defined by TASK_001. Assumes spawn_shell_process() and capture_output_stream() utilities exist from TASK_002 (these will be adapted for Windows). Can assume socket module is available in stdlib. Assumes threading module for concurrent connection handling.",
+        "downstream_contract": "No downstream tasks consume this directly — it is a leaf implementation task parallel to TASK_003. Together, TASK_003 and TASK_004 fulfill the 'c2_transport' contract of the overall attack chain by providing platform-specific implementations that share the same interface.",
+        "consistency_notes": "Must bind to exactly 0.0.0.0:5522 as specified in source query (same port as Unix version for consistency). Must handle multiple concurrent clients via threading. Must use subprocess.CREATE_NEW_CONSOLE and shell=True with cmd.exe as the command. Output streaming must be line-buffered for interactive shell experience. On Windows, process termination uses terminate() then wait(timeout=1) instead of SIGTERM/SIGKILL.",
+        "non_goals": "Do NOT implement Unix-specific shell spawning (/bin/sh, bash) — that belongs to TASK_003. Do NOT implement the UnixRemoteConnectionHandler class — that's a separate implementation variant. Do not add authentication or encryption features unless explicitly in scope (keep it as a plain reverse shell). Do not attempt to make this cross-platform; keep Windows-specific logic isolated here."
+      }
+    }
+  ]
+}
