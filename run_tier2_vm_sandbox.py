@@ -19,6 +19,7 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from pathlib import Path
 
+import tier2_rules
 from validate_scripts import _load_stage2_plan, _resolve_candidates
 
 REPO_ROOT = Path(__file__).resolve().parent
@@ -188,6 +189,12 @@ def _detonate(args, guest: Guest, candidate: dict, candidates: list[dict], run_d
                       timed_out=done.get("timed_out"), target_runtime_s=done.get("target_runtime_s"),
                       event_total=done.get("event_total"), event_counts=done.get("event_counts"),
                       runner_error=done.get("error"))
+        # Rule layer: deterministic signals over the capture. Its failure must not void a good capture.
+        try:
+            report = tier2_rules.analyze_evidence(evidence)
+            result.update(signals=report["signals"], behavior_report=str(evidence / tier2_rules.REPORT_NAME))
+        except Exception as exc:
+            result.update(signals=None, rules_error=str(exc))
     except subprocess.TimeoutExpired as exc:
         result.update(outcome="host_error", message=f"timed out: {exc.cmd[:2]}")
     except Exception as exc:  # never let one file's VM plumbing abort the whole run
@@ -256,9 +263,11 @@ def main() -> None:
             done_count += 1
             print(f"    CAPTURED: exit={result.get('exit_code')}, {result.get('event_total')} events "
                   f"({result['wall_time_s']:.0f}s total)")
+            print(f"    signals: {', '.join(result.get('signals') or []) or 'none'}")
         elif outcome == "timeout":
             timeout_count += 1
             print(f"    TIMEOUT: killed after {args.timeout}s, {result.get('event_total')} events captured")
+            print(f"    signals: {', '.join(result.get('signals') or []) or 'none'}")
         else:
             err_count += 1
             print(f"    FAIL: {outcome}: {result.get('message') or result.get('runner_error')}")
