@@ -1,7 +1,11 @@
 # Stage 4 Roadmap — Behavioral Validation, Containment, and Labeling
 
-Status: **design only.** Nothing in this document is built. Today's Stage 4 is Stage 4a (static validation)
-plus Tier 1 (the import-only execution gate). This roadmap describes how the project intends to climb from
+Status: **mostly design still.** Today's Stage 4 is Stage 4a (static validation) plus Tier 1 (the
+import-only execution gate); the validation-profile registry, any oracle, and the pipeline automation
+described below do not exist yet. One piece now has a manual, unintegrated proof of concept: §10 logs a
+hand-driven VM + eBPF capture environment, built and verified against a benign probe on a dedicated second
+host — not yet wired into the pipeline, not yet run against a real generated sample, and not yet covered by
+the §7 sign-off that gates doing so. This roadmap describes how the project intends to climb from
 "the code loads" to "the code *demonstrably performs the declared behavior, under observation, inside a
 sealed lab*" — and, crucially, where that climb must stop.
 
@@ -44,7 +48,7 @@ Each rung is run only on what passed the cheaper rung below it.
 | 2 | Do imports resolve and the symbol contract hold (statically)? | Stage 4a | ✅ |
 | 3 | Does module-level code load/run cleanly in isolation? | Tier 1 (import gate) | ✅ |
 | 3.5 | Does self-contained, deterministic logic behave correctly? | *self-test oracle* | ⬜ planned |
-| 4 | Does it **exhibit the declared technique behavior**, under observation, sealed? | *behavioral detonation + per-category oracle* | ⬜ planned |
+| 4 | Does it **exhibit the declared technique behavior**, under observation, sealed? | *behavioral detonation + per-category oracle* | ⬜ planned (environment + capture prototyped, see §10) |
 
 Rung 4 is the heart of this roadmap. Note rung 3.5 as a cheap, honest intermediate: a lot of generated code
 is deterministic and self-contained (encoders, serializers, a transport's framing/length-prefix round-trip,
@@ -178,7 +182,10 @@ Rung 4 means deliberately detonating code intended to be malicious. Before any o
    suggested: `c2_transport` (sealed peer/fake-service) and `credential_access` (canary decoy). The registry
    schema and these two profiles are the primary research artifact.
 3. **Stand up one contained detonation environment** (§4) with no-egress + fake-service + snapshots, gated by
-   the §7 sign-off. Validate containment with a benign probe before any real sample.
+   the §7 sign-off. Validate containment with a benign probe before any real sample. *(Partially done ahead
+   of §7 sign-off, on infra only: a benign probe has verified no-egress containment on a dedicated second
+   host — see §10. Fake-service networking, snapshots, and the §7 sign-off itself are still outstanding, so
+   this environment is not yet cleared to run anything beyond benign probes.)*
 4. **Add capture + deterministic oracle + the ATT&CK round-trip metric** (§5). Label per §6.
 5. **Generalize** to more categories once the two-category loop is trustworthy and the containment is proven.
 
@@ -193,3 +200,71 @@ Rung 4 means deliberately detonating code intended to be malicious. Before any o
   validate; keep the two in sync (a category with no validation profile should not be generable, or should
   be labeled `inconclusive` by construction).
 - **Operational cost.** Full-VM detonation is slow and heavy; the tiering in §4 is what keeps it tractable.
+
+## 10. Progress log
+
+**November 2026 — Tier 2 environment prototyped on a dedicated second host (infra only; no real sample run,
+no §7 sign-off yet).**
+
+Scope of this entry: building and proving the *environment and capture mechanism* rung 4 needs, exercised
+against a benign probe, per §8 phase 3's instruction to "validate containment with a benign probe before
+any real sample." It does **not** cover the validation-profile registry (§3), any oracle (§3/§5.2), the
+capability label (§6), or running any actual generated sample — those remain entirely unbuilt, and §7's
+institutional sign-off has not been sought, so no real (potentially offensive) generated code has run in
+this environment yet.
+
+- **Host and isolation tier (§4).** Stood up on a dedicated secondary Linux laptop (Ubuntu 24.04,
+  KVM-capable, kernel 6.8+ with BTF) acting as the disposable detonation host per §7 — not the development
+  machine. KVM/QEMU/libvirt, with a single Ubuntu 24.04 guest VM (`virt-install` + cloud-init) as the
+  detonation target. This is the "full virtual machine" tier §4 calls for; the gVisor/Firecracker
+  container-tier alternative for rung 3.5 is untouched by this work.
+- **No-egress networking (§4), empirically verified, not just configured.** Replaced the guest's default
+  NAT network with a libvirt network defined with no `<forward>` element at all (the host can still reach
+  the guest for control; the guest has no route anywhere else). Verified with a before/after: the same
+  benign probe script attempting `socket.create_connection(("8.8.8.8", 53))` printed `connected` on the NAT
+  network and `[Errno 101] Network is unreachable` after the swap — the isolation is real, not just a
+  renamed network.
+- **Snapshot/rollback (§4): not yet exercised.** The guest has been shut down, reconfigured, and restarted,
+  but `virsh snapshot-create-as` / `snapshot-revert` has not actually been used yet. Internal qcow2
+  snapshots are the planned mechanism; still open work.
+- **Capture tooling (§5), a concrete decision diverging from this doc's original sketch.** §5.1 names
+  Cuckoo/CAPE or a DIY `strace`/auditd-based VM as the two routes. CAPE was evaluated and deliberately
+  **not** chosen: its community ATT&CK-mapped signature set is overwhelmingly Windows-malware-oriented,
+  a weak fit now that the project has pivoted Linux-only (see Project section, CLAUDE.md). The DIY route
+  was built instead, using **Tracee** (eBPF-based, Aqua Security) rather than the `strace`/auditd
+  combination originally sketched — Tracee ships its own MITRE ATT&CK-mapped signature set (AVD), which
+  was the deciding factor over plain syscall tracing.
+  - **Working:** raw eBPF event capture, run as root inside the guest (`--capabilities bypass=true` — see
+    gotcha below). Verified against a benign probe to produce correctly-attributed `sched_process_exec`
+    events (exact PID, argv, parent PID) and network-attempt events (`security_socket_connect`,
+    `net_tcp_connect`, with destination IP/port) that correctly chain a multi-level process tree
+    (`timeout` → `python3` → `whoami`).
+  - **Not working: the prebuilt ATT&CK signature plugin.** Tracee's shipped `signatures/builtin.so` fails
+    to load (`plugin was built with a different version of package net` — a Go plugin ABI mismatch,
+    present even within the same official v0.24.1 release tarball). Until resolved, technique-matching
+    against Tracee's own signature set is unavailable; only raw events are captured. A rule engine over raw
+    events (§5.2) is not blocked by this, but gets no assist from Tracee's own signatures yet.
+  - **Known gap: file I/O is not in Tracee's default event set.** `credential_access`/`collection`/
+    `discovery`/`persistence` profiles (§3) will need explicit event selection (e.g. `-e openat,write`) —
+    unconfirmed as of this entry.
+  - **Known nuance for oracle-writing (§5.2, §9 oracle fairness):** `security_socket_connect`/
+    `net_tcp_connect`'s `returnValue: 0` reflects an LSM permission check / attempt-observation, not the
+    real `connect(2)` errno — confirmed by the no-egress test above showing `returnValue: 0` on both sealed
+    and open runs despite the application-level outcome differing. Matches this doc's own oracle framing
+    (§3: "connection attempt... in the capture", not confirmed success) but must not be read as a literal
+    success/failure field if a future oracle checks it directly; the real `connect` syscall event is not in
+    the default set either and would need explicit capture.
+- **Gotchas worth recording for whoever continues this:**
+  - `libvirt-qemu` (the user QEMU processes run as under `qemu:///system`) needs explicit `setfacl` search
+    grants on every host directory leading to a VM's disk image — the home directory's default mode blocks
+    it, and `virt-install` warns about this but doesn't fix it.
+  - Tracee v0.24.1 on kernel ≥6.8-ish with `perf_event_paranoid < 2` hits a real upstream bug
+    ([aquasecurity/tracee#5330](https://github.com/aquasecurity/tracee/issues/5330)): its capability
+    auto-selection omits `CAP_SYS_ADMIN`, which the kernel requires for `BPF_BTF_GET_FD_BY_ID` regardless of
+    `CAP_BPF`. Fixed upstream after this version; the workaround is `--capabilities bypass=true` (note the
+    `=true` — the bare flag is not sufficient).
+
+**Still entirely unbuilt:** the validation-profile registry (§3), any category's actual oracle, the
+guest-side detonation runner and host-side orchestrator (the real automation — this prototyping was done
+by hand over SSH), capture + rule engine + the ATT&CK round-trip metric (§5), the dataset label (§6), and
+§7's institutional sign-off — which gates running any real generated sample, not just benign probes.
