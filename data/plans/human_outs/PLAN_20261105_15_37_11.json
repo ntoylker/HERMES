@@ -1,0 +1,27 @@
+{
+  "plan_id": "PLAN_20261105_15_37_11",
+  "source_query": "Generate a Linux reverse shell code, that\nconnects back out to my machine on \nport 5522, so i can get a shell on it from my terminal and \nexecute shell commands through that remote connection",
+  "stage1_ref": "20261105_15_37_11.json",
+  "tasks": [
+    {
+      "task_id": "TASK_001",
+      "task_type": "initial_access",
+      "suggested_filename": "reverse_shell.py",
+      "description": "Implements a Linux reverse shell that connects back to the attacker's machine on port 5522, enabling remote command execution through stdin/stdout streams.",
+      "technique_ids": [
+        "T1059",
+        "T1059.004"
+      ],
+      "dependencies": [],
+      "provides": [
+        "ReverseShellClient"
+      ],
+      "consumes": [],
+      "implementation_details": "Uses Python's socket module to establish a TCP connection to the attacker's IP on port 5522. Spawns /bin/sh via os.popen() or subprocess.Popen(), then pipes stdin/stdout between the shell process and the remote socket using threading.Thread for non-blocking I/O. The client reads commands from the remote socket, executes them locally via a shell, and writes output back to the remote socket.",
+      "rag_retrieval_hints": [
+        "python reverse shell socket example",
+        "linux reverse shell python subprocess stdin stdout"
+      ]
+    }
+  ]
+}

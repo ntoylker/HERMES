@@ -1,0 +1,1 @@
+{"run_dir": "<repo>\\data\\code_scripts", "task_id": "TASK_001", "filename": "TASK_001_file_discovery_collector.py", "image": "hermes-tier1-base:latest", "outcome": "import_ok", "duration_s": 0.022182957999999697, "wall_time_s": 3.7783886999823153, "timestamp": "2026-11-06T19:17:51.933837+00:00"}

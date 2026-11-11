@@ -1,0 +1,4 @@
+{"run_dir": "data\\code_scripts", "task_id": "TASK_001", "filename": "TASK_001_models.py", "verdict": "pass", "findings": [], "missing_dependencies": [], "timestamp": "2026-10-21T11:36:28.912609+00:00"}
+{"run_dir": "data\\code_scripts", "task_id": "TASK_002", "filename": "TASK_002_unix_reverse_shell.py", "verdict": "pass", "findings": [], "missing_dependencies": [], "timestamp": "2026-10-21T11:36:28.920596+00:00"}
+{"run_dir": "data\\code_scripts", "task_id": "TASK_003", "filename": "TASK_003_windows_reverse_shell.py", "verdict": "pass", "findings": [], "missing_dependencies": [], "timestamp": "2026-10-21T11:36:28.926605+00:00"}
+{"run_dir": "data\\code_scripts", "task_id": "TASK_004", "filename": "TASK_004___main__.py", "verdict": "pass", "findings": [], "missing_dependencies": [], "timestamp": "2026-10-21T11:36:28.931086+00:00"}
