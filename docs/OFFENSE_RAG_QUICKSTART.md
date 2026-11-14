@@ -20,7 +20,6 @@ Recommended repo layout:
 - [data/eval/machine_outs/](../data/eval/machine_outs) (generation-eval Stage 1 outputs)
 - [data/human_outs/](../data/human_outs)
 - [data/machine_outs/](../data/machine_outs)
-- [data/config/stage2_constraints.json](../data/config/stage2_constraints.json)
 - [data/plans/](../data/plans)
 - [data/code_scripts/](../data/code_scripts)
 - [artifacts/offense_index/](../artifacts/offense_index)
@@ -166,7 +165,7 @@ The `.json` file is the human-friendly view; the `.jsonl` file is the machine-fr
 
 ## 6) Build a Stage 2 task plan
 
-`plan_tasks.py` takes the Stage 1 pretty JSON output and asks an LLM (local LM Studio by default, falling back to Gemini on failure, or Gemini directly via `--provider gemini`; `--gemini-model` defaults to `gemini-3.1-pro-preview`) to produce a task plan, deterministically validated against `data/config/stage2_constraints.json`. It enriches the model prompt with technique-level ATT&CK chunk text from the SQLite index, but does not persist any chunk-level evidence reference into the resulting plan.
+`plan_tasks.py` takes the Stage 1 pretty JSON output and asks an LLM (local LM Studio by default, falling back to Gemini on failure, or Gemini directly via `--provider gemini`; `--gemini-model` defaults to `gemini-3.1-pro-preview`) to produce a task plan, deterministically validated (JSON schema, acyclic DAG, provides/consumes symbol contract, TTP coverage — there is no external constraints file and no fixed `task_type` vocabulary). It enriches the model prompt with technique-level ATT&CK chunk text from the SQLite index, but does not persist any chunk-level evidence reference into the resulting plan.
 
 ```bash
 ./venv/bin/python plan_tasks.py --stage1-input data/human_outs/<stage1-timestamp>.json

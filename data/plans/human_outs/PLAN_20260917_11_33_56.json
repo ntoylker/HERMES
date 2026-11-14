@@ -1,0 +1,30 @@
+{
+  "plan_id": "PLAN_20260917_11_33_56",
+  "source_query": "Generate a reverse shell code, that opens a shell in 0.0.0.0 interface and port 5522 that i can connect from the outside lan my terminal and execute shell commands from my remote connection",
+  "stage1_ref": "20260917_11_33_56.json",
+  "tasks": [
+    {
+      "task_id": "TASK_001",
+      "task_type": "c2_transport",
+      "suggested_filename": "reverse_shell.py",
+      "description": "Creates a cross-platform reverse shell that connects to a specified listener IP and port, spawning a system shell (`cmd.exe` on Windows, `/bin/sh` on Unix-like systems) and redirecting its I/O over the socket.",
+      "technique_ids": [
+        "T1059",
+        "T1059.003",
+        "T1059.004"
+      ],
+      "dependencies": [],
+      "provides": [
+        "ReverseShell"
+      ],
+      "consumes": [],
+      "implementation_details": "Implement a `ReverseShell` class that takes a host and port. A `start` method will create a TCP socket connection to the listener. It will use the `platform` module to detect the OS. Based on the OS, it will use `subprocess.Popen` to spawn either 'cmd.exe' (Windows) or '/bin/sh' (Linux/macOS), with `stdin`, `stdout`, and `stderr` redirected to `subprocess.PIPE`. A loop will continuously read commands from the socket, write them to the shell's stdin, and forward the shell's stdout/stderr back to the socket. The implementation should handle connection termination gracefully.",
+      "rag_retrieval_hints": [
+        "python reverse shell using socket and subprocess",
+        "python cross-platform reverse shell cmd.exe /bin/sh",
+        "python subprocess.Popen redirect stdin stdout stderr",
+        "python interactive shell over socket"
+      ]
+    }
+  ]
+}

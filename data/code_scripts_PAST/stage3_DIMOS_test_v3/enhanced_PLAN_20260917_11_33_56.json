@@ -1,0 +1,132 @@
+{
+  "plan_id": "PLAN_20260917_11_33_56",
+  "source_query": "Generate a reverse shell code, that opens a shell in 0.0.0.0 interface and port 5522 that i can connect from the outside lan my terminal and execute shell commands from my remote connection",
+  "stage1_ref": "20260917_11_33_56.json",
+  "tasks": [
+    {
+      "task_id": "TASK_001",
+      "task_type": "data_model",
+      "suggested_filename": "models.py",
+      "description": "Defines the ExecutionResult dataclass that encapsulates the output of shell command execution, including stdout, stderr, return code, and metadata.",
+      "technique_ids": [
+        "T1059",
+        "T1059.004"
+      ],
+      "dependencies": [],
+      "provides": [
+        "ExecutionResult"
+      ],
+      "consumes": [],
+      "implementation_details": "Define a dataclass ExecutionResult with fields: stdout (str), stderr (str), return_code (int), command (str), timestamp (datetime). No external dependencies required.",
+      "rag_retrieval_hints": [
+        "python dataclass execution result pattern",
+        "subprocess output capture structure"
+      ],
+      "scenario_context": {
+        "narrative_role": "Foundation data contract definition that establishes the schema for all command execution results consumed by downstream tasks.",
+        "upstream_assumptions": "None (root task). Assumes only standard Python environment is available.",
+        "downstream_contract": "TASK_003 consumes 'ExecutionResult' to capture subprocess stdout/stderr. TASK_004 expects 'ExecutionResult' as the return type of its execution hook interface.",
+        "consistency_notes": "Must use dataclass with explicit type hints (str, int, datetime). Timestamps must be ISO 8601 formatted for interoperability across tasks.",
+        "non_goals": "Do not implement socket logic, subprocess spawning, or main entry point orchestration. Do not handle network binding."
+      }
+    },
+    {
+      "task_id": "TASK_002",
+      "task_type": "utility",
+      "suggested_filename": "socket_utils.py",
+      "description": "Provides socket connection utilities for establishing outbound reverse shell connections to a C2 server on specified host and port.",
+      "technique_ids": [
+        "T1059",
+        "T1133"
+      ],
+      "dependencies": [],
+      "provides": [
+        "connect_to_c2",
+        "listen_for_connections"
+      ],
+      "consumes": [],
+      "implementation_details": "Use socket.socket() with AF_INET/SOCK_STREAM. Implement connect_to_c2(host, port) that creates a TCP client connection and sets up non-blocking I/O for command reception. Implement listen_for_connections(host='0.0.0.0', port=5522) using threading.Thread to handle incoming connections on the listening socket.",
+      "rag_retrieval_hints": [
+        "python reverse shell socket implementation",
+        "non blocking socket python example",
+        "threading server socket 0.0.0.0"
+      ],
+      "scenario_context": {
+        "narrative_role": "Networking infrastructure layer providing the transport mechanism for both client-side reverse connections and server-side listening sockets.",
+        "upstream_assumptions": "None (root task). Assumes standard library 'socket' and 'threading' modules are available in the environment.",
+        "downstream_contract": "TASK_003 requires 'connect_to_c2(host, port)' to establish an outbound TCP connection for piping subprocess I/O. TASK_004 requires 'listen_for_connections(host='0.0.0.0', port=5522)' to bind and accept incoming connections on the specified interface/port.",
+        "consistency_notes": "The listener must bind strictly to '0.0.0.0' on port 5522 as per source query. Client connections should be non-blocking or threaded to prevent I/O blocking during command reception.",
+        "non_goals": "Do not implement high-level orchestration logic (main loop). Do not define the data model for results."
+      }
+    },
+    {
+      "task_id": "TASK_003",
+      "task_type": "payload_staging",
+      "suggested_filename": "payload_builder.py",
+      "description": "Constructs the reverse shell payload by spawning a subprocess that connects back to the C2 server and pipes stdin/stdout through the socket.",
+      "technique_ids": [
+        "T1059",
+        "T1059.004"
+      ],
+      "dependencies": [
+        "TASK_001",
+        "TASK_002"
+      ],
+      "provides": [
+        "build_reverse_shell_payload"
+      ],
+      "consumes": [
+        "ExecutionResult",
+        "connect_to_c2"
+      ],
+      "implementation_details": "Use subprocess.Popen with shell=True, passing a bash -i command. Connect the process stdout/stderr to a socket connected via connect_to_c2(). The payload spawns /bin/sh -i which opens an interactive shell on 0.0.0.0:5522. Use threading to handle both client connection and subprocess lifecycle.",
+      "rag_retrieval_hints": [
+        "python reverse shell subprocess bash -i",
+        "reverse shell socket pipe stdin stdout python"
+      ],
+      "scenario_context": {
+        "narrative_role": "Core payload construction engine that bridges the socket utility and the execution result model by spawning a shell process piped through the network connection.",
+        "upstream_assumptions": "Assumes 'ExecutionResult' class is available (from TASK_001) to wrap output. Assumes 'connect_to_c2' function exists (from TASK_002) to provide the socket endpoint for piping subprocess I/O.",
+        "downstream_contract": "Provides 'build_reverse_shell_payload'. Consumed by TASK_004 which wraps this logic into a callable entry point exposed to the user's terminal connection. Must return an ExecutionResult object upon shell session completion or stream output via the result object.",
+        "consistency_notes": "Must use '/bin/sh -i' for interactive shell behavior. The subprocess must inherit stdin/stdout from the socket connected by TASK_002.",
+        "non_goals": "Do not implement network binding (use TASK_002). Do not implement the main application entry point or CLI argument parsing."
+      }
+    },
+    {
+      "task_id": "TASK_004",
+      "task_type": "execution_hook",
+      "suggested_filename": "main.py",
+      "description": "Main orchestrator that wires together the payload builder and execution hook, providing a callable entry point for remote command execution.",
+      "technique_ids": [
+        "T1059",
+        "T1059.003",
+        "T1059.004",
+        "T1505.003"
+      ],
+      "dependencies": [
+        "TASK_002",
+        "TASK_003"
+      ],
+      "provides": [
+        "reverse_shell_server",
+        "execute_remote_command"
+      ],
+      "consumes": [
+        "listen_for_connections",
+        "build_reverse_shell_payload"
+      ],
+      "implementation_details": "Create a main() function that instantiates the payload builder, starts the listener thread on 0.0.0.0:5522, and exposes execute_remote_command(host='192.168.x.x', port=5522) as the primary entry point. The execution hook accepts remote host/port parameters and returns an ExecutionResult object with captured command output.",
+      "rag_retrieval_hints": [
+        "python reverse shell main orchestrator",
+        "reverse shell server 0.0.0.0:5522 python"
+      ],
+      "scenario_context": {
+        "narrative_role": "Main orchestrator and user-facing entry point that wires together the payload builder, socket listener, and data model into a runnable reverse shell server accessible from an external terminal.",
+        "upstream_assumptions": "Assumes 'listen_for_connections' (from TASK_002) is available to start the listening thread on 0.0.0.0:5522. Assumes 'build_reverse_shell_payload' (from TASK_003) is available to spawn the shell process. Assumes 'ExecutionResult' (from TASK_001) is importable for return values.",
+        "downstream_contract": "None (final task). Serves as the entry point for the user's remote connection.",
+        "consistency_notes": "Must expose 'execute_remote_command(host='192.168.x.x', port=5522)' as the primary callable interface matching the source query intent. The server thread must run in the background while the execution hook handles command dispatching.",
+        "non_goals": "Do not re-implement socket connection logic (use TASK_002). Do not re-implement payload construction (use TASK_003)."
+      }
+    }
+  ]
+}

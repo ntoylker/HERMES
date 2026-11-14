@@ -1,0 +1,182 @@
+{
+  "plan_id": "PLAN_20260917_11_33_56",
+  "source_query": "Generate a reverse shell code, that opens a shell in 0.0.0.0 interface and port 5522 that i can connect from the outside lan my terminal and execute shell commands from my remote connection",
+  "stage1_ref": "20260917_11_33_56.json",
+  "tasks": [
+    {
+      "task_id": "TASK_001",
+      "task_type": "data_model",
+      "suggested_filename": "models.py",
+      "description": "Define configuration and data structures for the reverse shell system including socket addresses, command handlers, and session state.",
+      "technique_ids": [
+        "T1059",
+        "T1059.004"
+      ],
+      "dependencies": [],
+      "provides": [
+        "ReverseShellConfig",
+        "CommandHandler",
+        "SessionState",
+        "SocketAddress"
+      ],
+      "consumes": [],
+      "implementation_details": "Uses dataclasses from Python stdlib to define immutable configuration objects for bind address (0.0.0.0), port (5522), and command execution metadata. No external dependencies required.",
+      "rag_retrieval_hints": [
+        "python dataclass reverse shell config",
+        "dataclass socket binding pattern"
+      ]
+    },
+    {
+      "task_id": "TASK_002",
+      "task_type": "utility",
+      "suggested_filename": "utils.py",
+      "description": "Provide reusable utility functions for network operations, process management, and shell command execution.",
+      "technique_ids": [
+        "T1059.004"
+      ],
+      "dependencies": [],
+      "provides": [
+        "execute_shell_command",
+        "parse_socket_address",
+        "format_response",
+        "safe_eval"
+      ],
+      "consumes": [],
+      "implementation_details": "Uses subprocess module for command execution, socket module for address parsing, and json module for response formatting. Implements safe_eval to prevent arbitrary code injection in shell output.",
+      "rag_retrieval_hints": [
+        "python subprocess execute command",
+        "socket address parsing python"
+      ]
+    },
+    {
+      "task_id": "TASK_003",
+      "task_type": "c2_transport",
+      "suggested_filename": "transport.py",
+      "description": "Implement the core reverse shell listener that binds to 0.0.0.0:5522 and handles incoming client connections.",
+      "technique_ids": [
+        "T1059",
+        "T1133"
+      ],
+      "dependencies": [
+        "TASK_001"
+      ],
+      "provides": [
+        "ReverseShellServer",
+        "ClientConnection"
+      ],
+      "consumes": [
+        "ReverseShellConfig"
+      ],
+      "implementation_details": "Uses socket module to create a TCP server bound to 0.0.0.0:5522. Implements non-blocking I/O with select/poll for handling multiple client connections simultaneously. Each connection is wrapped in a ClientConnection object that manages the bidirectional stream.",
+      "rag_retrieval_hints": [
+        "python socket tcp server bind 0.0.0.0",
+        "non blocking socket python select"
+      ]
+    },
+    {
+      "task_id": "TASK_004",
+      "task_type": "execution_hook",
+      "suggested_filename": "executor.py",
+      "description": "Handle incoming shell commands from connected clients and execute them on the target system via Unix Shell.",
+      "technique_ids": [
+        "T1059.004"
+      ],
+      "dependencies": [
+        "TASK_002"
+      ],
+      "provides": [
+        "CommandExecutor",
+        "ExecutionResult"
+      ],
+      "consumes": [
+        "execute_shell_command",
+        "parse_socket_address"
+      ],
+      "implementation_details": "Uses subprocess.Popen to spawn shell processes for each incoming command. Implements a timeout mechanism (30s default) and captures stdout/stderr from the spawned process. Returns structured ExecutionResult objects with exit code, output, and error streams.",
+      "rag_retrieval_hints": [
+        "python subprocess Popen execute command",
+        "subprocess capture stdout stderr"
+      ]
+    },
+    {
+      "task_id": "TASK_005",
+      "task_type": "reconnaissance",
+      "suggested_filename": "recon.py",
+      "description": "Provide reconnaissance capabilities for the reverse shell including system info gathering, network enumeration, and process listing.",
+      "technique_ids": [
+        "T1059.004"
+      ],
+      "dependencies": [
+        "TASK_002"
+      ],
+      "provides": [
+        "ReconScanner",
+        "SystemInfo",
+        "NetworkEnumResult"
+      ],
+      "consumes": [
+        "execute_shell_command"
+      ],
+      "implementation_details": "Uses subprocess to execute reconnaissance commands (whoami, uname -a, netstat, ps auxf) and parses output using regex patterns. Implements a command registry pattern where each recon operation maps to a predefined shell command.",
+      "rag_retrieval_hints": [
+        "python subprocess whoami uname",
+        "python parse network information"
+      ]
+    },
+    {
+      "task_id": "TASK_006",
+      "task_type": "orchestrator_test",
+      "suggested_filename": "main.py",
+      "description": "Orchestrate all components together and provide the main entry point for the reverse shell server with integration testing.",
+      "technique_ids": [
+        "T1059",
+        "T1059.004",
+        "T1133"
+      ],
+      "dependencies": [
+        "TASK_001",
+        "TASK_002",
+        "TASK_003",
+        "TASK_004",
+        "TASK_005"
+      ],
+      "provides": [
+        "ReverseShellApp",
+        "main"
+      ],
+      "consumes": [
+        "ReverseShellConfig",
+        "execute_shell_command",
+        "CommandExecutor",
+        "ReconScanner",
+        "format_response"
+      ],
+      "implementation_details": "Uses argparse for CLI argument parsing, signal module for graceful shutdown handling (SIGINT/SIGTERM), and threading for concurrent client management. Implements a main loop that accepts connections on 0.0.0.0:5522, routes commands through the executor, and streams results back to clients.",
+      "rag_retrieval_hints": [
+        "python socket server main entry point",
+        "python signal graceful shutdown"
+      ]
+    },
+    {
+      "task_id": "TASK_007",
+      "task_type": "utility",
+      "suggested_filename": "windows_utils.py",
+      "description": "Provide Windows-specific utility functions for command execution via cmd.exe, covering T1059.003 (Windows Command Shell).",
+      "technique_ids": [
+        "T1059.003"
+      ],
+      "dependencies": [],
+      "provides": [
+        "execute_windows_command",
+        "parse_cmd_output",
+        "format_windows_response"
+      ],
+      "consumes": [],
+      "implementation_details": "Uses subprocess module with creationflags=subprocess.CREATE_NEW_CONSOLE and shell=True to spawn cmd.exe processes. Handles Windows-specific output parsing for commands like ipconfig, netstat -ano, tasklist, and systeminfo. Implements timeout handling specific to Windows command execution patterns.",
+      "rag_retrieval_hints": [
+        "python subprocess windows cmd exe",
+        "python execute cmd shell true"
+      ]
+    }
+  ]
+}

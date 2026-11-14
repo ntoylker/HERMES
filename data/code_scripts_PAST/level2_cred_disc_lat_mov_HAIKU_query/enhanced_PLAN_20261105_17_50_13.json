@@ -1,0 +1,67 @@
+{
+  "plan_id": "PLAN_20261105_17_50_13",
+  "source_query": "On a Linux system (192.168.1.50, Ubuntu 20.04), discover SSH private keys in standard user locations (~/.ssh/id_rsa, ~/.ssh/id_ed25519, etc.) and parse the system's known_hosts file to identify possible target hosts. Then, use the discovered keys to establish an SSH connection to a specific target host (192.168.1.100) and execute a hardcoded verification command (echo 'access confirmed') to prove successful lateral movement. The entire operation runs as the current unprivileged user and must handle key permissions and SSH authentication cleanly without interactive prompts.",
+  "stage1_ref": "20261105_17_50_13.json",
+  "tasks": [
+    {
+      "task_id": "TASK_001",
+      "task_type": "credential_access",
+      "suggested_filename": "ssh_credential_discovery.py",
+      "description": "Scans the user's home directory for common SSH private key files (e.g., id_rsa, id_ed25519) and parses the ~/.ssh/known_hosts file to extract a list of potential remote hosts.",
+      "technique_ids": [
+        "T1552.004",
+        "T1018"
+      ],
+      "dependencies": [],
+      "provides": [
+        "SshCredentials",
+        "discover_ssh_credentials"
+      ],
+      "consumes": [],
+      "implementation_details": "Define a dataclass `SshCredentials` to hold `private_key_paths: list[str]` and `known_hosts: list[str]`. The main function will use `os.path.expanduser` to locate the `~/.ssh` directory. It will then use `os.listdir` or `glob` to find files matching common private key names (id_rsa, id_dsa, id_ecdsa, id_ed25519). For host discovery, it will read and parse `~/.ssh/known_hosts`, splitting lines on spaces and commas to extract hostnames/IPs, ignoring comments and hashed entries.",
+      "rag_retrieval_hints": [
+        "python find ssh private keys in home directory",
+        "python parse .ssh/known_hosts file",
+        "python os.path.expanduser and glob for file searching",
+        "python dataclass for storing credentials"
+      ],
+      "scenario_context": {
+        "consistency_notes": "Target environment is Ubuntu 20.04 on Linux host 192.168.1.50 running as an unprivileged user. All file paths must use os.path.expanduser('~') for the home directory. The ~/.ssh/known_hosts parsing must handle both space-separated and comma-separated entries while filtering out comment lines (starting with #) and hashed host entries.",
+        "downstream_contract": "TASK_001 provides SshCredentials and discover_ssh_credentials to TASK_002, which will consume these outputs to attempt SSH connections against the discovered target hosts. The credentials object must contain a list of private key file paths that TASK_002 can iterate over for authentication attempts.",
+        "narrative_role": "This is the credential access phase of the lateral movement chain — it discovers and catalogs SSH private keys in standard user locations and extracts potential remote targets from known_hosts, setting up the foundation for the subsequent SSH connection attempt performed by TASK_002.",
+        "non_goals": "TASK_001 should not establish any network connections, authenticate to remote hosts, or execute commands on target systems. It does not handle key permission remediation (chmod/umask) — that is a pre-condition constraint of the overall objective rather than this task's responsibility."
+      }
+    },
+    {
+      "task_id": "TASK_002",
+      "task_type": "lateral_movement",
+      "suggested_filename": "ssh_lateral_movement.py",
+      "description": "Attempts to connect to a specified target host via SSH using a list of discovered private keys, executing a command upon successful authentication to verify access.",
+      "technique_ids": [
+        "T1021.004"
+      ],
+      "dependencies": [
+        "TASK_001"
+      ],
+      "provides": [
+        "execute_remote_ssh_command"
+      ],
+      "consumes": [
+        "SshCredentials"
+      ],
+      "implementation_details": "Use the 'paramiko' library for SSH client functionality. The main function will accept a target hostname, username, command, and an `SshCredentials` object. It will iterate through the `private_key_paths` provided. For each key, it will attempt a non-interactive connection, setting the client policy to `paramiko.AutoAddPolicy()` to avoid host key prompts. Upon successful connection, it will execute the command, capture stdout/stderr, close the connection, and return the result. It must handle `paramiko.AuthenticationException` and other connection errors gracefully.",
+      "rag_retrieval_hints": [
+        "python paramiko ssh connect with private key file non-interactive",
+        "paramiko execute remote command and get output",
+        "paramiko AutoAddPolicy example",
+        "python paramiko iterate through multiple private keys for authentication"
+      ],
+      "scenario_context": {
+        "consistency_notes": "Target environment is Ubuntu 20.04 Linux at 192.168.1.50; target SSH host is 192.168.1.100. The task must operate as the current unprivileged user, handle key file permissions correctly (e.g., chmod 600), and suppress all interactive prompts using paramiko's AutoAddPolicy and non-interactive connection modes.",
+        "narrative_role": "This is the lateral movement execution phase of the attack chain. It takes discovered SSH credentials from TASK_001 and uses them to authenticate against a remote host, completing the proof-of-concept by executing a verification command on the target system.",
+        "non_goals": "Do not perform key discovery or file scanning — that is the responsibility of TASK_001. Do not implement interactive SSH sessions or prompt handling for user input. Do not attempt to modify the remote host's configuration or persistence mechanisms; this task only proves connectivity via a single command execution.",
+        "upstream_assumptions": "The task assumes TASK_001 has successfully discovered and populated an SshCredentials object containing valid private key file paths (id_rsa, id_ed25519, etc.) from the ~/.ssh directory on the compromised host. It also assumes the known_hosts parsing from TASK_001 has identified 192.168.1.100 as a reachable target with an associated SSH key."
+      }
+    }
+  ]
+}

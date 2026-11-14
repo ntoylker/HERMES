@@ -1,0 +1,231 @@
+{
+  "plan_id": "PLAN_20260917_11_33_56",
+  "source_query": "Generate a reverse shell code, that opens a shell in 0.0.0.0 interface and port 5522 that i can connect from the outside lan my terminal and execute shell commands from my remote connection",
+  "stage1_ref": "20260917_11_33_56.json",
+  "tasks": [
+    {
+      "task_id": "TASK_001",
+      "task_type": "data_model",
+      "suggested_filename": "models.py",
+      "description": "Define configuration and data structures for the reverse shell system including socket addresses, command handlers, and session state.",
+      "technique_ids": [
+        "T1059",
+        "T1059.004"
+      ],
+      "dependencies": [],
+      "provides": [
+        "ReverseShellConfig",
+        "CommandHandler",
+        "SessionState",
+        "SocketAddress"
+      ],
+      "consumes": [],
+      "implementation_details": "Uses dataclasses from Python stdlib to define immutable configuration objects for bind address (0.0.0.0), port (5522), and command execution metadata. No external dependencies required.",
+      "rag_retrieval_hints": [
+        "python dataclass reverse shell config",
+        "dataclass socket binding pattern"
+      ],
+      "scenario_context": {
+        "narrative_role": "Foundation layer — defines the immutable schema that all other components consume. This is the single source of truth for configuration (bind address, port), command metadata, and session state. Every downstream task depends on this being correct because it dictates how connections are accepted, commands are structured, and responses are formatted.",
+        "upstream_assumptions": "No dependencies — this is the root data model. Assumes only Python stdlib is available (dataclasses module).",
+        "downstream_contract": "TASK_003 consumes ReverseShellConfig to know which address/port to bind on. TASK_006 consumes CommandHandler, SessionState, and SocketAddress for CLI argument parsing and runtime state management. All field names must match exactly as defined here.",
+        "consistency_notes": "Use dataclasses from Python stdlib only (no external libraries). Fields must be immutable (frozen=True or __slots__). Type hints must reflect the semantic meaning: SocketAddress is a named tuple of (host, port), ReverseShellConfig bundles bind_address and port together. No mutable state — this is pure configuration.",
+        "non_goals": "Do not implement any actual socket binding logic here. Do not implement command execution or parsing logic. Do not handle I/O — only define the data structures that describe what will be passed between components."
+      }
+    },
+    {
+      "task_id": "TASK_002",
+      "task_type": "utility",
+      "suggested_filename": "utils.py",
+      "description": "Provide reusable utility functions for network operations, process management, and shell command execution.",
+      "technique_ids": [
+        "T1059.004"
+      ],
+      "dependencies": [],
+      "provides": [
+        "execute_shell_command",
+        "parse_socket_address",
+        "format_response",
+        "safe_eval"
+      ],
+      "consumes": [],
+      "implementation_details": "Uses subprocess module for command execution, socket module for address parsing, and json module for response formatting. Implements safe_eval to prevent arbitrary code injection in shell output.",
+      "rag_retrieval_hints": [
+        "python subprocess execute command",
+        "socket address parsing python"
+      ],
+      "scenario_context": {
+        "narrative_role": "Infrastructure layer — provides reusable primitives that both the executor and recon modules depend on. This is the 'toolbox' that prevents code duplication across TASK_004 and TASK_005. It encapsulates the common pattern of spawning a shell process, capturing output with timeout, and formatting JSON responses.",
+        "upstream_assumptions": "No dependencies — standalone utility module. Assumes only Python stdlib (subprocess, socket, json) is available.",
+        "downstream_contract": "TASK_004 consumes execute_shell_command to run arbitrary user commands from connected clients. TASK_005 consumes execute_shell_command to run predefined recon commands. TASK_006 consumes format_response to serialize results as JSON over the wire. All functions must return consistent types (ExecutionResult, dict[str, str], etc.).",
+        "consistency_notes": "safe_eval must prevent arbitrary code injection — only allow a whitelisted set of safe expressions or use ast.literal_eval on parsed output. subprocess.Popen must be used with shell=True and proper timeout handling. parse_socket_address must handle both IPv4 and IPv6 formats gracefully.",
+        "non_goals": "Do not implement the network listener logic (that's TASK_003). Do not implement the main application loop or threading (that's TASK_006). Do not implement Windows-specific command execution (that's TASK_007)."
+      }
+    },
+    {
+      "task_id": "TASK_003",
+      "task_type": "c2_transport",
+      "suggested_filename": "transport.py",
+      "description": "Implement the core reverse shell listener that binds to 0.0.0.0:5522 and handles incoming client connections.",
+      "technique_ids": [
+        "T1059",
+        "T1133"
+      ],
+      "dependencies": [
+        "TASK_001"
+      ],
+      "provides": [
+        "ReverseShellServer",
+        "ClientConnection"
+      ],
+      "consumes": [
+        "ReverseShellConfig"
+      ],
+      "implementation_details": "Uses socket module to create a TCP server bound to 0.0.0.0:5522. Implements non-blocking I/O with select/poll for handling multiple client connections simultaneously. Each connection is wrapped in a ClientConnection object that manages the bidirectional stream.",
+      "rag_retrieval_hints": [
+        "python socket tcp server bind 0.0.0.0",
+        "non blocking socket python select"
+      ],
+      "scenario_context": {
+        "narrative_role": "Transport layer — the actual network-facing component that accepts incoming connections on 0.0.0.0:5522 and manages the lifecycle of each client connection. This is where the reverse shell 'listens' for attackers connecting from outside the LAN.",
+        "upstream_assumptions": "Can assume ReverseShellConfig exists with bind_address='0.0.0.0' and port=5522 (from TASK_001). Can assume ClientConnection class structure is defined in TASK_001's data model.",
+        "downstream_contract": "TASK_006 consumes ClientConnection objects to route incoming connections to the executor/recon modules. Each connection must be a non-blocking file descriptor managed via select/poll. The server must handle multiple concurrent clients simultaneously.",
+        "consistency_notes": "Must use socket module with TCP (SOCK_STREAM). Must implement non-blocking I/O using select or poll for handling multiple client connections at once. Must bind to 0.0.0.0:5522 exactly as specified in the source query. Must handle SIGINT/SIGTERM for graceful shutdown of all connected clients.",
+        "non_goals": "Do not implement command execution logic (that's TASK_004). Do not implement reconnaissance commands (that's TASK_005). Do not implement Windows-specific utilities (that's TASK_007)."
+      }
+    },
+    {
+      "task_id": "TASK_004",
+      "task_type": "execution_hook",
+      "suggested_filename": "executor.py",
+      "description": "Handle incoming shell commands from connected clients and execute them on the target system via Unix Shell.",
+      "technique_ids": [
+        "T1059.004"
+      ],
+      "dependencies": [
+        "TASK_002"
+      ],
+      "provides": [
+        "CommandExecutor",
+        "ExecutionResult"
+      ],
+      "consumes": [
+        "execute_shell_command",
+        "parse_socket_address"
+      ],
+      "implementation_details": "Uses subprocess.Popen to spawn shell processes for each incoming command. Implements a timeout mechanism (30s default) and captures stdout/stderr from the spawned process. Returns structured ExecutionResult objects with exit code, output, and error streams.",
+      "rag_retrieval_hints": [
+        "python subprocess Popen execute command",
+        "subprocess capture stdout stderr"
+      ],
+      "scenario_context": {
+        "narrative_role": "Execution layer — translates raw input from connected clients into actual system command execution. This is the core 'shell' functionality where user-typed commands are run on the target system via Unix Shell (T1059.004).",
+        "upstream_assumptions": "Can assume execute_shell_command utility exists from TASK_002 that spawns subprocess.Popen with proper timeout and stream capture. Can assume ExecutionResult dataclass structure is defined in TASK_001.",
+        "downstream_contract": "TASK_006 consumes ExecutionResult objects to forward stdout/stderr back through the socket connection to the client. Must handle command timeouts (30s default) and propagate exit codes correctly.",
+        "consistency_notes": "Must use Unix Shell (/bin/sh or bash) — not Windows cmd.exe. Must implement a 30-second timeout on each command execution. Must capture both stdout and stderr streams separately. Must return ExecutionResult with fields: command, exit_code (int), stdout (str), stderr (str).",
+        "non_goals": "Do not implement the network listener logic (that's TASK_003). Do not implement reconnaissance commands — those are handled by TASK_005's ReconScanner. Do not implement Windows-specific execution (that's TASK_007)."
+      }
+    },
+    {
+      "task_id": "TASK_005",
+      "task_type": "reconnaissance",
+      "suggested_filename": "recon.py",
+      "description": "Provide reconnaissance capabilities for the reverse shell including system info gathering, network enumeration, and process listing.",
+      "technique_ids": [
+        "T1059.004"
+      ],
+      "dependencies": [
+        "TASK_002"
+      ],
+      "provides": [
+        "ReconScanner",
+        "SystemInfo",
+        "NetworkEnumResult"
+      ],
+      "consumes": [
+        "execute_shell_command"
+      ],
+      "implementation_details": "Uses subprocess to execute reconnaissance commands (whoami, uname -a, netstat, ps auxf) and parses output using regex patterns. Implements a command registry pattern where each recon operation maps to a predefined shell command.",
+      "rag_retrieval_hints": [
+        "python subprocess whoami uname",
+        "python parse network information"
+      ],
+      "scenario_context": {
+        "narrative_role": "Intelligence layer — provides enumeration and discovery capabilities for the reverse shell. This enables the attacker to gather system information, network topology, and process details from the compromised target.",
+        "upstream_assumptions": "Can assume execute_shell_command utility exists from TASK_002 that spawns subprocess.Popen with proper timeout and stream capture. Can assume SystemInfo and NetworkEnumResult dataclass structures are defined in TASK_001.",
+        "downstream_contract": "TASK_006 consumes ReconScanner to provide recon commands to connected clients. The scanner must expose a registry of predefined commands (whoami, uname -a, netstat, ps auxf) that map to shell commands.",
+        "consistency_notes": "Must use the command registry pattern where each operation maps to a predefined shell command string. Must parse output using regex patterns as specified in implementation_details. Must stay within T1059.004 scope (Unix Shell only). Output must be structured as SystemInfo or NetworkEnumResult objects.",
+        "non_goals": "Do not implement the network listener logic (that's TASK_003). Do not implement general command execution for arbitrary user input — that's TASK_004. Do not implement Windows-specific utilities (that's TASK_007)."
+      }
+    },
+    {
+      "task_id": "TASK_006",
+      "task_type": "orchestrator_test",
+      "suggested_filename": "main.py",
+      "description": "Orchestrate all components together and provide the main entry point for the reverse shell server with integration testing.",
+      "technique_ids": [
+        "T1059",
+        "T1059.004",
+        "T1133"
+      ],
+      "dependencies": [
+        "TASK_001",
+        "TASK_002",
+        "TASK_003",
+        "TASK_004",
+        "TASK_005"
+      ],
+      "provides": [
+        "ReverseShellApp",
+        "main"
+      ],
+      "consumes": [
+        "ReverseShellConfig",
+        "execute_shell_command",
+        "CommandExecutor",
+        "ReconScanner",
+        "format_response"
+      ],
+      "implementation_details": "Uses argparse for CLI argument parsing, signal module for graceful shutdown handling (SIGINT/SIGTERM), and threading for concurrent client management. Implements a main loop that accepts connections on 0.0.0.0:5522, routes commands through the executor, and streams results back to clients.",
+      "rag_retrieval_hints": [
+        "python socket server main entry point",
+        "python signal graceful shutdown"
+      ],
+      "scenario_context": {
+        "narrative_role": "Orchestration layer — the single entry point that wires all components together and exposes the CLI interface. This is the 'main.py' file that runs when the reverse shell server starts, accepting connections on 0.0.0.0:5522 and routing them to appropriate handlers.",
+        "upstream_assumptions": "Can assume all component classes exist from TASK_001-TASK_005 (ReverseShellConfig, CommandExecutor, ReconScanner, ReverseShellServer, execute_shell_command, format_response). Can assume threading module is available for concurrent client management.",
+        "downstream_contract": "None — this is the final task. It's the entry point that ties everything together and exposes the application to users via CLI arguments.",
+        "consistency_notes": "Must use argparse for CLI argument parsing (bind_address, port, debug flags). Must use signal module for graceful shutdown handling on SIGINT/SIGTERM. Must use threading.Thread or concurrent.futures for managing multiple client connections concurrently. Must integrate all 5 other tasks into a cohesive application flow.",
+        "non_goals": "Do not reimplement any component logic from other tasks (don't duplicate the socket binding, don't duplicate command execution). Do not create new data structures — use what TASK_001 defined. Don't handle network I/O directly — delegate to ReverseShellServer."
+      }
+    },
+    {
+      "task_id": "TASK_007",
+      "task_type": "utility",
+      "suggested_filename": "windows_utils.py",
+      "description": "Provide Windows-specific utility functions for command execution via cmd.exe, covering T1059.003 (Windows Command Shell).",
+      "technique_ids": [
+        "T1059.003"
+      ],
+      "dependencies": [],
+      "provides": [
+        "execute_windows_command",
+        "parse_cmd_output",
+        "format_windows_response"
+      ],
+      "consumes": [],
+      "implementation_details": "Uses subprocess module with creationflags=subprocess.CREATE_NEW_CONSOLE and shell=True to spawn cmd.exe processes. Handles Windows-specific output parsing for commands like ipconfig, netstat -ano, tasklist, and systeminfo. Implements timeout handling specific to Windows command execution patterns.",
+      "rag_retrieval_hints": [
+        "python subprocess windows cmd exe",
+        "python execute cmd shell true"
+      ],
+      "scenario_context": {
+        "narrative_role": "Platform extension layer — provides Windows-specific command execution capabilities via cmd.exe (T1059.003). This extends the reverse shell's reach beyond Unix systems, allowing it to execute commands on Windows targets.",
+        "upstream_assumptions": "No dependencies — standalone utility module. Assumes only Python stdlib is available.",
+        "downstream_contract": "TASK_006 consumes these functions to provide cross-platform command execution capabilities. May be used by TASK_004 or TASK_005 for Windows targets, depending on the target OS detected at runtime.",
+        "consistency_notes": "Must use subprocess with creationflags=subprocess.CREATE_NEW_CONSOLE and shell=True to spawn cmd.exe processes. Must handle Windows-specific output parsing for commands like ipconfig /all, netstat -ano, tasklist /V, systeminfo. Must implement timeout handling specific to Windows command execution patterns (cmd.exe has different timeout behavior than bash).",
+        "non_goals": "Do not implement Unix command execution (that's TASK_004). Do not implement the network listener logic (that's TASK_003). Do not implement reconnaissance commands for Unix systems (that's TASK_005)."
+      }
+    }
+  ]
+}

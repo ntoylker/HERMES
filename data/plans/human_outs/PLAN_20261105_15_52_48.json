@@ -1,0 +1,27 @@
+{
+  "plan_id": "PLAN_20261105_15_52_48",
+  "source_query": "Generate a Linux reverse shell code, that\nconnects back out to a hardcoded IP address constant for my machine (192.168.1.10) on\nport 5522, so i can get a shell on it from my terminal and \nexecute shell commands through that remote connection",
+  "stage1_ref": "20261105_15_52_48.json",
+  "tasks": [
+    {
+      "task_id": "TASK_001",
+      "task_type": "initial_access",
+      "suggested_filename": "reverse_shell.py",
+      "description": "Implements a Linux reverse shell that connects back to a hardcoded C2 server at 192.168.1.10:5522, enabling remote command execution via stdin/stdout streams.",
+      "technique_ids": [
+        "T1059",
+        "T1059.004"
+      ],
+      "dependencies": [],
+      "provides": [
+        "ReverseShell"
+      ],
+      "consumes": [],
+      "implementation_details": "Uses Python's socket module to establish a TCP connection to 192.168.1.10:5522. Reads commands from stdin, executes them via os.popen() or subprocess.Popen(), and writes output to stdout. The ReverseShell class encapsulates the connect(), send_command(), receive_output(), and run() methods. No external dependencies beyond stdlib (socket, os, subprocess).",
+      "rag_retrieval_hints": [
+        "python reverse shell socket implementation example",
+        "linux bash reverse shell python code stdin stdout"
+      ]
+    }
+  ]
+}

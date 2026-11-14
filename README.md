@@ -9,9 +9,9 @@ task-conditioned only, not malware-sample-grounded.
 
 **Safety**: all work must stay thesis-safe — isolated sandbox, no real exploit code, no operational attack
 instructions, no real targets/credentials/persistence/live C2/exfiltration. This is a prompt-level
-instruction today, not a machine-checked one: Stage 2's `data/config/stage2_constraints.json` only
-constrains structure (task-type taxonomy, target language), not task content. See [CLAUDE.md](CLAUDE.md)
-for the full breakdown.
+instruction only, not a machine-checked one: Stage 2 has no structural constraints file — `task_type` is
+free text with no fixed vocabulary, and `target_language`/`min_python_version` are hardcoded constants in
+`plan_tasks.py`. See [CLAUDE.md](CLAUDE.md) for the full breakdown.
 
 ## Pipeline
 
@@ -38,7 +38,6 @@ entry point, expect it to change.
 | `data/processed/` | Derived corpora and intermediate JSONL outputs. |
 | `data/eval/` | Evaluation cases used for retrieval and generation scoring (tracked in git). |
 | `data/human_outs/` / `data/machine_outs/` | Stage 1 pretty-JSON / JSONL outputs. |
-| `data/config/stage2_constraints.json` | Stage 2's task-type/language constraints (structure only, not content safety). |
 | `data/plans/human_outs/` / `data/plans/machine_outs/` | Stage 2 validated plans (pretty JSON, success only) / every attempted run (JSONL, valid and invalid). |
 | `data/code_scripts/` | Stage 3 generated per-task Python files and `manifest.jsonl`. |
 | `artifacts/offense_index/` | Hybrid index artifacts (SQLite FTS5 + embeddings). |
