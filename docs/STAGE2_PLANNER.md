@@ -33,12 +33,15 @@ techniques are listed by ID/name only.
 
 ## Constraints
 
-`data/config/stage2_constraints.json` (hardcoded path, not a CLI option) is schema v2.0 and currently
-supplies only `allowed_task_types`, `target_language`, and `min_python_version` — all three are read into
-the prompt and `allowed_task_types` is enforced by the validator. Its `environment` and `schema_version`
-keys exist but are not consumed anywhere; the "Environment" line shown to the model is a hardcoded string,
-not read from this file. There is no `forbidden_capability_keywords` list, network-policy field, or
-implementation-mode field in the current schema.
+There is no external constraints file. `data/config/stage2_constraints.json` (previously a hardcoded path,
+not a CLI option) was removed — it had been constraining only structure (a fixed `task_type` vocabulary,
+plus `target_language`/`min_python_version` strings), not task content, and in practice the fixed
+`task_type` vocabulary was over-constraining real plans. `target_language`/`min_python_version` are now
+hardcoded module constants in `plan_tasks.py` (`DEFAULT_TARGET_LANGUAGE = "python"`,
+`DEFAULT_MIN_PYTHON_VERSION = "3.11"`) and still appear in the prompt's "RESEARCH & OPERATIONAL
+CONSTRAINTS" section unchanged; `task_type` is now free text the model assigns per task, with no fixed
+list and no validator check against one. There is no `forbidden_capability_keywords` list, network-policy
+field, or implementation-mode field in the current schema, and never was.
 
 ## Prompt Design
 
@@ -85,7 +88,7 @@ capability needs.
 
 ## Planning Flow
 
-1. Load the Stage 1 result and `stage2_constraints.json`.
+1. Load the Stage 1 result.
 2. Build per-technique evidence from the SQLite ATT&CK index.
 3. Call the configured LLM provider (`--provider`, default `lmstudio`) for a single JSON draft. LM Studio
    failures automatically fall back to Gemini (`GEMINI_API_KEY` required); `--provider gemini` uses Gemini
@@ -100,8 +103,9 @@ The validator (`PlanValidator.validate`) checks, in order:
 
 1. **Schema** — `tasks` is a non-empty list; each task has a unique string `task_id` and all of
    `task_type`, `suggested_filename`, `description`, `technique_ids`, `dependencies`, `provides`,
-   `consumes`, `implementation_details`, `rag_retrieval_hints`; `task_type` is one of
-   `allowed_task_types`. Any schema error short-circuits the remaining checks for that attempt.
+   `consumes`, `implementation_details`, `rag_retrieval_hints`. `task_type` must be present as a key but
+   its value is not checked against any fixed vocabulary (or any type at all) — whatever the model
+   assigns is accepted as-is. Any schema error short-circuits the remaining checks for that attempt.
 2. **Acyclic DAG** — every `dependencies` entry resolves to a known `task_id` (no self-deps), verified with
    a DFS cycle check.
 3. **Symbol contract** — every name in a task's `consumes` must appear in the `provides` list of at least
@@ -109,9 +113,9 @@ The validator (`PlanValidator.validate`) checks, in order:
 4. **TTP coverage** — the union of every task's `technique_ids` must be a superset of the Stage 1 **top**
    technique IDs (alternatives are not required to be covered).
 
-There is no `evidence_refs` field, no per-task language field, no `forbidden_capability_keywords` scan, and
-no canonical-ID remapping step — the model's own `TASK_NNN`-style `task_id` values are used as-is in the
-persisted plan.
+There is no `evidence_refs` field, no per-task language field, no `forbidden_capability_keywords` scan, no
+`task_type` vocabulary check, and no canonical-ID remapping step — the model's own `TASK_NNN`-style
+`task_id` values are used as-is in the persisted plan.
 
 ## Run the Planner
 

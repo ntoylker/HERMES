@@ -31,8 +31,6 @@ data/raw/enterprise-attack/
 !data/code_scripts/**
 !data/code_scripts_PAST/
 !data/code_scripts_PAST/**
-!data/config/
-!data/config/**
 !data/eval/
 !data/eval/**
 !data/human_outs/

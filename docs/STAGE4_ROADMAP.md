@@ -60,9 +60,11 @@ inputs in a container — no network, no victim — and the resulting green is r
 The core design decision: **validation is per adversary category, not generic.** Different ATT&CK tactics
 produce different observable effects and need different environments to exhibit them; one uniform runner
 cannot fairly judge them. The plan is a **validation-profile registry** keyed to the Stage 2 `task_type`
-taxonomy (`data/config/stage2_constraints.json`'s `allowed_task_types`). The set of categories the pipeline
-accepts is fixed up front; each category's validation profile is authored and reviewed once; from then on,
-when a run's category is known (chosen early in the flow), Stage 4 provisions that category's environment
+label. Stage 2 no longer enforces a fixed task_type vocabulary (the `stage2_constraints.json` file that
+used to constrain it was removed — `task_type` is now free text the model assigns per task), so this
+registry's category set will need to be defined and owned by Stage 4 itself rather than inherited from a
+Stage 2 schema. Each category's validation profile is authored and reviewed once; from then on, when a
+run's category is known (chosen early in the flow), Stage 4 provisions that category's environment
 automatically.
 
 Each profile is three things — all framed as *observation inside containment*:

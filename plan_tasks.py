@@ -5,7 +5,7 @@ Acts as the System Architect for the HERMES pipeline:
 2. Queries SQLite index (artifacts/offense_index/offense_index.sqlite) for MITRE ATT&CK procedure evidence.
 3. Uses dual-backend LLM provider (local LM Studio Qwen or Gemini REST fallback).
 4. Enforces deterministic validation: JSON schema, acyclic DAG, provides/consumes symbol contracts,
-   vocabulary check, and TTP coverage.
+   and TTP coverage.
 5. Runs a self-repair retry loop upon validation failure.
 6. Persists machine records (.jsonl) and formatted human summaries (.json).
 """
@@ -43,6 +43,8 @@ DEFAULT_GEMINI_MODEL = "gemini-3.1-pro-preview"
 DEFAULT_TIMEOUT = 600
 DEFAULT_MAX_TOKENS = 16384
 DEFAULT_MAX_RETRIES = 3
+DEFAULT_TARGET_LANGUAGE = "python"
+DEFAULT_MIN_PYTHON_VERSION = "3.11"
 
 # Chunk types that are always included when present (canonical technique text, not "examples").
 MANDATORY_CHUNK_TYPES = ("technique_description", "technique_overview")
@@ -114,11 +116,9 @@ class ContextBuilder:
         self,
         stage1_path: Path,
         db_path: Path = Path("artifacts/offense_index/offense_index.sqlite"),
-        constraints_path: Path = Path("data/config/stage2_constraints.json"),
     ) -> None:
         self.stage1_path = stage1_path
         self.db_path = db_path
-        self.constraints_path = constraints_path
         self._chunk_embedding_index_loaded = False
         self._chunk_embedding_index: tuple[Any, Any, np.ndarray] | None = None
         self._query_embedding_cache: dict[str, np.ndarray] = {}
@@ -130,11 +130,6 @@ class ContextBuilder:
         if not data.get("query"):
             raise ValueError(f"Stage 1 output missing 'query': {self.stage1_path}")
         return data
-
-    def load_constraints(self) -> dict[str, Any]:
-        if not self.constraints_path.exists():
-            raise FileNotFoundError(f"Missing constraints file: {self.constraints_path}")
-        return json.loads(self.constraints_path.read_text(encoding="utf-8"))
 
     def extract_stage1_elements(
         self, stage1_data: dict[str, Any]
@@ -382,17 +377,12 @@ class ContextBuilder:
         previous_plan: dict | None = None,
     ) -> tuple[str, str, set[str]]:
         stage1_data = self.load_stage1_artifact()
-        constraints = self.load_constraints()
         query, summary, sub_queries, top_tech_ids, alt_tech_ids, technique_query_map = (
             self.extract_stage1_elements(stage1_data)
         )
 
         all_techniques = top_tech_ids | alt_tech_ids
         evidence_map = self.fetch_attack_evidence(all_techniques, top_tech_ids, technique_query_map, query)
-
-        allowed_task_types = constraints.get("allowed_task_types", [])
-        target_language = constraints.get("target_language", "python")
-        min_py_version = constraints.get("min_python_version", "3.11")
 
         system_prompt = (
             "You are the Lead Systems Architect for the HERMES offensive security research pipeline.\n"
@@ -411,8 +401,7 @@ class ContextBuilder:
             "",
             "## 1. RESEARCH & OPERATIONAL CONSTRAINTS",
             f"- Environment: Isolated research sandbox (academic red-teaming research).",
-            f"- Target Language: {target_language} ({min_py_version}+).",
-            f"- Allowed Task Types: {json.dumps(allowed_task_types)}",
+            f"- Target Language: {DEFAULT_TARGET_LANGUAGE} ({DEFAULT_MIN_PYTHON_VERSION}+).",
             "",
             "## 2. SOURCE QUERY & ATTACK PHASES",
             f"Source Query:\n{query}",
@@ -450,7 +439,8 @@ class ContextBuilder:
             "1. Output a modular, ordered DAG of tasks (e.g. TASK_001, TASK_002, etc.).",
             "2. Every task must declare:",
             "   - `task_id`: e.g. 'TASK_001', 'TASK_002'",
-            f"   - `task_type`: MUST be one of {allowed_task_types}",
+            "   - `task_type`: a short category label for this task's attack phase (e.g. 'persistence', "
+            "'discovery', 'c2_transport') — free text describing the task's role, not drawn from a fixed list.",
             "   - `suggested_filename`: Python filename describing the task's module (e.g. 'task_module.py')",
             "   - `description`: 1-2 sentence description of the task's responsibility.",
             "   - `technique_ids`: array of MITRE ATT&CK technique IDs in the 'Txxxx' / 'Txxxx.xxx' format used in section 3 above. ALL top techniques listed above MUST be covered across the tasks.",
@@ -525,7 +515,7 @@ class ContextBuilder:
             '  "tasks": [',
             "    {",
             '      "task_id": "TASK_001",',
-            '      "task_type": "<one of the allowed_task_types listed above>",',
+            '      "task_type": "<short category label, e.g. \'persistence\'>",',
             '      "suggested_filename": "task_module.py",',
             '      "description": "One or two sentences describing what this task is responsible for.",',
             '      "technique_ids": ["<a technique ID from section 3 above>"],',
@@ -537,7 +527,7 @@ class ContextBuilder:
             "    },",
             "    {",
             '      "task_id": "TASK_002",',
-            '      "task_type": "<one of the allowed_task_types listed above>",',
+            '      "task_type": "<short category label, e.g. \'discovery\'>",',
             '      "suggested_filename": "another_module.py",',
             '      "description": "One or two sentences describing what this task is responsible for.",',
             '      "technique_ids": ["<a technique ID from section 3 above>"],',
@@ -685,8 +675,7 @@ class PlanValidator:
         "rag_retrieval_hints",
     }
 
-    def __init__(self, allowed_task_types: list[str], top_technique_ids: set[str]) -> None:
-        self.allowed_task_types = set(allowed_task_types)
+    def __init__(self, top_technique_ids: set[str]) -> None:
         self.top_technique_ids = top_technique_ids
 
     def validate(self, plan: dict[str, Any]) -> tuple[bool, list[str]]:
@@ -722,11 +711,6 @@ class PlanValidator:
             missing_keys = self.REQUIRED_TASK_KEYS - set(task.keys())
             if missing_keys:
                 errors.append(f"Task '{tid}' missing required keys: {sorted(missing_keys)}.")
-
-            # Vocabulary Validation
-            ttype = task.get("task_type")
-            if ttype not in self.allowed_task_types:
-                errors.append(f"Task '{tid}' invalid task_type '{ttype}'. Allowed: {sorted(self.allowed_task_types)}.")
 
             # Record provided symbols
             provides = task.get("provides")
@@ -830,9 +814,6 @@ class PlannerEngine:
         self.human_out_dir = human_out_dir
 
     def run(self) -> dict[str, Any]:
-        constraints = self.context_builder.load_constraints()
-        allowed_task_types = constraints.get("allowed_task_types", [])
-
         feedback: list[str] | None = None
         previous_plan: dict | None = None
         stage1_stem = self.context_builder.stage1_path.stem
@@ -848,7 +829,7 @@ class PlannerEngine:
                 feedback=feedback, previous_plan=previous_plan
             )
 
-            validator = PlanValidator(allowed_task_types, top_tech_ids)
+            validator = PlanValidator(top_tech_ids)
 
             try:
                 draft_plan = self.llm_provider.generate(system_prompt, user_prompt)

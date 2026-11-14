@@ -29,12 +29,14 @@ explicitly. Treat the Linux-filtered pair as the intended future baseline, not a
 
 All work in this repo must stay thesis-safe: isolated sandbox, no real exploit code, no operational attack
 instructions, no real targets/credentials/persistence/live C2/exfiltration. **Content safety is still a
-prompt-level instruction, not a machine-checked one**: `data/config/stage2_constraints.json` only
-constrains structure (allowed task-type taxonomy, target language), and its `allowed_task_types` list
-explicitly permits `credential_access` and `c2_transport` as task categories — neither it nor Stage 2's
-validator scans task content for forbidden capabilities (see Architecture below). A
-`forbidden_capability_keywords` advisory scan existed in a prior schema version but was dropped when Stage 2
-moved to the current schema v2.0. The only *content* safety net enforced today is the Stage 1/Stage 3
+prompt-level instruction, not a machine-checked one.** Stage 2 has no structural constraints file at all
+anymore — `data/config/stage2_constraints.json` was removed, along with the `task_type` vocabulary check
+it had backed (that vocabulary had explicitly permitted `credential_access` and `c2_transport` as task
+categories, so removing it loosens structure, not content safety: neither that file nor Stage 2's validator
+ever scanned task content for forbidden capabilities — see Architecture below). Stage 2's `task_type` field
+is now free text the model assigns per task, with no vocabulary at all, fixed or otherwise. A
+`forbidden_capability_keywords` advisory scan existed in an even earlier schema version but was dropped
+when Stage 2 moved to schema v2.0, well before this removal. The only *content* safety net enforced today is the Stage 1/Stage 3
 prompts instructing the model to avoid step-by-step offensive detail and treat the work as sandboxed
 research — model compliance, not code. What **is** now machine-enforced is *execution containment*: Tier 1
 runs each generated file inside a throwaway Docker container with no network, capped CPU/memory, a
@@ -278,9 +280,10 @@ to decompose top ATT&CK techniques directly into
 tasks — the model assigns each task's own final `TASK_NNN`-style `task_id`, `task_type`,
 `suggested_filename`, `technique_ids`, `dependencies`, `provides`/`consumes` symbol contract,
 `implementation_details`, and `rag_retrieval_hints`. The model's JSON is never trusted structurally — a
-deterministic validator checks required keys and `task_type` against
-`data/config/stage2_constraints.json`'s `allowed_task_types`, detects dependency cycles via DFS (blocking),
-cross-validates that every `consumes` symbol is `provides`d by a declared dependency, and requires every
+deterministic validator checks that every required key is present (`task_type` included, but its value is
+free text with no fixed vocabulary and is accepted as-is — there is no constraints file backing it),
+detects dependency cycles via DFS (blocking), cross-validates that every `consumes` symbol is `provides`d
+by a declared dependency, and requires every
 Stage 1 top/primary technique to be covered by at least one task's `technique_ids` or the whole plan is
 invalid. There is no `evidence_refs` field, no `forbidden_capability_keywords` scan, and no canonical-ID
 remapping step in the current schema (v2.0) — the model's own task IDs are persisted as-is. On failure,
@@ -595,9 +598,10 @@ Auto-detects provider from env vars (Google AI Studio -> Azure OpenAI -> OpenAI,
 - Retrieval defaults (`vector_k=25, bm25_k=25, lexical_weight=0.05`) are a checked-in standard across every
   entry point; deviations for one-off experiments should be recorded next to that experiment's output
   rather than changing the shared defaults.
-- Stage 2 currently only allows `target_language: "python"` for generated tasks. `target_language` in
-  `stage2_constraints.json` is a single string, not a list — there is no `allowed_languages` key and no
-  per-task `language` field in the current schema.
+- Stage 2 currently only allows `target_language: "python"` for generated tasks. `target_language` and
+  `min_python_version` are hardcoded module constants in `plan_tasks.py` (`DEFAULT_TARGET_LANGUAGE`,
+  `DEFAULT_MIN_PYTHON_VERSION`), not read from any config file — there is no `allowed_languages` key and no
+  per-task `language` field.
 - Python comment style: concise, inline, for a software-engineer audience. Module docstrings are 1-3 lines
   stating which stage the file belongs to. Comment only non-obvious logic, JSON schemas, validation loops,
   and domain-specific ATT&CK/STIX concepts — not self-explanatory code or standard Python patterns.

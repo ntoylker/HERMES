@@ -4,7 +4,7 @@ Every prompt actually sent to an LLM anywhere in the pipeline, gathered in one p
 Sourced directly from the five files that build prompt strings (`grep`-verified — these are the only
 files in the repo that do): `decompose_query.py`, `generate_offense_rag.py`, `plan_tasks.py`,
 `plan_enhancing.py`, `generate_code.py`. This is a snapshot of the prompt text as written in code as of
-2026-11-05 — the code is the source of truth; if a prompt-building function changes, this doc goes stale
+2026-11-14 — the code is the source of truth; if a prompt-building function changes, this doc goes stale
 until it's re-synced.
 
 Static text is quoted verbatim. Dynamic parts (f-string interpolations, loops over retrieved data) are
@@ -181,7 +181,6 @@ default (rule 0)" section.)*
 ## 1. RESEARCH & OPERATIONAL CONSTRAINTS
 - Environment: Isolated research sandbox (academic red-teaming research).
 - Target Language: {target_language} ({min_py_version}+).
-- Allowed Task Types: {allowed_task_types}
 
 ## 2. SOURCE QUERY & ATTACK PHASES
 Source Query:
@@ -208,7 +207,8 @@ Alternative / Supporting Techniques:    <- only if any exist
 1. Output a modular, ordered DAG of tasks (e.g. TASK_001, TASK_002, etc.).
 2. Every task must declare:
    - `task_id`: e.g. 'TASK_001', 'TASK_002'
-   - `task_type`: MUST be one of {allowed_task_types}
+   - `task_type`: a short category label for this task's attack phase (e.g. 'persistence', 'discovery',
+     'c2_transport') — free text describing the task's role, not drawn from a fixed list.
    - `suggested_filename`: Python filename describing the task's module (e.g. 'task_module.py')
    - `description`: 1-2 sentence description of the task's responsibility.
    - `technique_ids`: array of MITRE ATT&CK technique IDs in the 'Txxxx' / 'Txxxx.xxx' format used in section 3 above. ALL top techniques listed above MUST be covered across the tasks.
@@ -244,7 +244,7 @@ evidence in sections 2-3 above.
   "tasks": [
     {
       "task_id": "TASK_001",
-      "task_type": "<one of the allowed_task_types listed above>",
+      "task_type": "<short category label, e.g. 'persistence'>",
       "suggested_filename": "task_module.py",
       "description": "One or two sentences describing what this task is responsible for.",
       "technique_ids": ["<a technique ID from section 3 above>"],
@@ -256,7 +256,7 @@ evidence in sections 2-3 above.
     },
     {
       "task_id": "TASK_002",
-      "task_type": "<one of the allowed_task_types listed above>",
+      "task_type": "<short category label, e.g. 'discovery'>",
       "suggested_filename": "another_module.py",
       "description": "One or two sentences describing what this task is responsible for.",
       "technique_ids": ["<a technique ID from section 3 above>"],
@@ -293,8 +293,7 @@ Previous invalid plan was:
 
 Say Stage 1 resolved the query *"enumerate running processes on a Linux host and write the results to a
 file"* to top technique `T1057` (Process Discovery), with one retrieved `technique_overview` chunk and no
-alternatives, no sub-query split, and `allowed_task_types` from `stage2_constraints.json`. Section 2
-and 3 of the rendered prompt would read:
+alternatives and no sub-query split. Section 2 and 3 of the rendered prompt would read:
 
 ```text
 ## 2. SOURCE QUERY & ATTACK PHASES
