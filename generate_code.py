@@ -816,11 +816,18 @@ def main() -> None:
                 raise RuntimeError(error or "generation failed")
             return code
 
+        checkpoint_path = checkpoint_dir / f"{task_id}.py"
+        if args.force and checkpoint_path.exists():
+            # --force must also invalidate this Drive-side checkpoint, not just the manifest-based
+            # resume check above -- otherwise a stale checkpoint from an earlier run (e.g. against an
+            # older plan version) would still short-circuit _produce() and silently hand back old code.
+            checkpoint_path.unlink()
+
         try:
             # A checkpoint hit skips _produce() (and so the model call) entirely and returns the
             # previously-saved code; produce_meta then stays empty, which the manifest record below
             # reports as attempts=None / diagnostics=None rather than fabricating a count.
-            code = llm_client.checkpoint(checkpoint_dir / f"{task_id}.py", _produce)
+            code = llm_client.checkpoint(checkpoint_path, _produce)
         except RuntimeError as exc:
             if not produce_meta:
                 # produce_meta never got populated, so this RuntimeError came from _generate_task
