@@ -1,0 +1,32 @@
+{
+  "plan_id": "PLAN_20261105_15_52_48",
+  "source_query": "Generate a Linux reverse shell code, that\nconnects back out to a hardcoded IP address constant for my machine (192.168.1.10) on\nport 5522, so i can get a shell on it from my terminal and \nexecute shell commands through that remote connection",
+  "stage1_ref": "20261105_15_52_48.json",
+  "tasks": [
+    {
+      "task_id": "TASK_001",
+      "task_type": "c2_transport",
+      "suggested_filename": "linux_reverse_shell.py",
+      "description": "Implement a Python reverse shell client for Linux that connects to the hardcoded attacker endpoint 192.168.1.10:5522 and replaces the process with an interactive /bin/sh so commands can be executed from the remote terminal.",
+      "technique_ids": [
+        "T1059",
+        "T1059.004"
+      ],
+      "dependencies": [],
+      "provides": [
+        "REMOTE_IP",
+        "REMOTE_PORT",
+        "start_reverse_shell",
+        "main"
+      ],
+      "consumes": [],
+      "implementation_details": "Use Python 3.11 standard library modules socket, os, and sys. Define module-level constants REMOTE_IP = '192.168.1.10' and REMOTE_PORT = 5522. In start_reverse_shell(), create an AF_INET SOCK_STREAM socket, connect to the hardcoded endpoint, then use os.dup2() to map the socket file descriptor to stdin, stdout, and stderr, and finally use os.execvp('/bin/sh', ['/bin/sh', '-i']) to spawn an interactive Unix shell. Include a main() entry point and basic exception handling that reports connection failures to stderr before exiting.",
+      "rag_retrieval_hints": [
+        "python socket reverse shell /bin/sh dup2",
+        "linux reverse shell python socket connect hardcoded ip port",
+        "python os.dup2 os.execvp /bin/sh -i",
+        "netcat listener 192.168.1.10 5522 reverse shell"
+      ]
+    }
+  ]
+}

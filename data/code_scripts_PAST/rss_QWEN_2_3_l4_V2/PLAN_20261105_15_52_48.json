@@ -1,0 +1,32 @@
+{
+  "plan_id": "PLAN_20261105_15_52_48",
+  "source_query": "Generate a Linux reverse shell code, that\nconnects back out to a hardcoded IP address constant for my machine (192.168.1.10) on\nport 5522, so i can get a shell on it from my terminal and \nexecute shell commands through that remote connection",
+  "stage1_ref": "20261105_15_52_48.json",
+  "tasks": [
+    {
+      "task_id": "TASK_001",
+      "task_type": "execution",
+      "suggested_filename": "linux_reverse_shell.py",
+      "description": "Implement a Python reverse shell that connects to the hardcoded listener at 192.168.1.10:5522 and bridges the connected socket to an interactive /bin/sh session.",
+      "technique_ids": [
+        "T1059",
+        "T1059.004"
+      ],
+      "dependencies": [],
+      "provides": [
+        "REMOTE_HOST",
+        "REMOTE_PORT",
+        "ReverseShell",
+        "main"
+      ],
+      "consumes": [],
+      "implementation_details": "Use socket.socket(socket.AF_INET, socket.SOCK_STREAM) to connect to the hardcoded constants REMOTE_HOST='192.168.1.10' and REMOTE_PORT=5522. After connecting, use os.dup2 to attach the socket file descriptor to standard input, standard output, and standard error, then launch /bin/sh -i with subprocess.call or os.execvp. Provide a ReverseShell class encapsulating connect/exec logic and a main() entry point for direct execution.",
+      "rag_retrieval_hints": [
+        "python reverse shell socket connect hardcoded ip port subprocess /bin/sh",
+        "python os.dup2 socket file descriptor stdin stdout stderr reverse shell",
+        "linux reverse shell python 3.11 socket subprocess interactive shell",
+        "python socket makefile subprocess bidirectional shell reverse shell"
+      ]
+    }
+  ]
+}
