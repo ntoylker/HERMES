@@ -1,0 +1,60 @@
+{
+  "plan_id": "PLAN_20261115_14_40_52",
+  "source_query": "On a Linux system (192.168.1.50, Ubuntu 24.04), discover SSH private keys in standard user locations (~/.ssh/id_rsa, ~/.ssh/id_ed25519, etc.) and parse the system's known_hosts file to identify possible target hosts. Then, use the discovered keys to establish an SSH connection to a specific target host (192.168.1.100) and execute a hardcoded verification command (echo 'access confirmed') to prove successful lateral movement. The entire operation runs as the current unprivileged user and must handle key permissions and SSH authentication cleanly without interactive prompts.",
+  "stage1_ref": "20261115_14_40_52.json",
+  "tasks": [
+    {
+      "task_id": "TASK_001",
+      "task_type": "discovery",
+      "suggested_filename": "ssh_discovery.py",
+      "description": "Discovers SSH private key files in the current user's standard ~/.ssh locations and parses known_hosts files to enumerate possible remote SSH targets.",
+      "technique_ids": [
+        "T1083",
+        "T1552.004",
+        "T1018"
+      ],
+      "dependencies": [],
+      "provides": [
+        "SshKeyCandidate",
+        "KnownHostEntry",
+        "discover_ssh_private_keys",
+        "parse_known_hosts"
+      ],
+      "consumes": [],
+      "implementation_details": "Implement dataclasses SshKeyCandidate and KnownHostEntry in this module. Use pathlib.Path.home() / '.ssh' as the primary search directory; enumerate regular files and match standard private key names (id_rsa, id_ed25519, id_ecdsa, id_dsa, id_ed25519_sk, id_ecdsa_sk, id_rsa_sk, id_dsa_sk) plus any readable file whose first 256 bytes contain b'PRIVATE KEY'. Record path, inferred key type, stat mode, and readability. For known_hosts, parse Path.home() / '.ssh' / 'known_hosts' and, if readable, /etc/ssh/ssh_known_hosts; skip comments and blank lines, split each line on whitespace, treat the first field as a comma-separated host list or [ip]:port entry, and return KnownHostEntry objects with host, optional port, and raw line.",
+      "rag_retrieval_hints": [
+        "Python pathlib search ~/.ssh for id_rsa id_ed25519 private key files",
+        "Python parse SSH known_hosts file extract hostnames IP addresses port",
+        "Python dataclass file discovery result os.stat mode readable"
+      ]
+    },
+    {
+      "task_id": "TASK_002",
+      "task_type": "lateral_movement",
+      "suggested_filename": "ssh_lateral_movement.py",
+      "description": "Uses discovered SSH private keys to authenticate non-interactively to hardcoded target 192.168.1.100 and executes the verification command echo 'access confirmed'.",
+      "technique_ids": [
+        "T1021.004"
+      ],
+      "dependencies": [
+        "TASK_001"
+      ],
+      "provides": [
+        "LateralMoveResult",
+        "ssh_lateral_move"
+      ],
+      "consumes": [
+        "discover_ssh_private_keys",
+        "parse_known_hosts",
+        "SshKeyCandidate",
+        "KnownHostEntry"
+      ],
+      "implementation_details": "Implement LateralMoveResult dataclass with success, host, remote_user, key_path, stdout, stderr, returncode, and attempted_keys. In ssh_lateral_move(), call discover_ssh_private_keys() to obtain candidate keys and call parse_known_hosts() to collect possible target hosts for research context, but preserve the query constraint by connecting only to hardcoded TARGET_HOST = '192.168.1.100'. Use getpass.getuser() as the remote username. For each SshKeyCandidate, ensure the private key is usable by ssh: if its mode is not 0600, attempt os.chmod(path, 0o600) when the current user owns/writes it; otherwise copy it to a tempfile with mode 0600 and use that temporary path. Invoke the local ssh client with subprocess.run using arguments: ssh -i <key> -o IdentitiesOnly=yes -o BatchMode=yes -o PasswordAuthentication=no -o PubkeyAuthentication=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 <remote_user>@192.168.1.100 echo 'access confirmed'. Capture stdout/stderr, set success when returncode is 0 and stdout contains 'access confirmed', and return the first successful LateralMoveResult or a failure result containing all attempted key errors.",
+      "rag_retrieval_hints": [
+        "Python subprocess ssh -i private key BatchMode=yes non-interactive remote command",
+        "Python SSH lateral movement execute echo access confirmed on remote host",
+        "Python handle SSH private key permissions chmod 0600 tempfile before ssh"
+      ]
+    }
+  ]
+}
