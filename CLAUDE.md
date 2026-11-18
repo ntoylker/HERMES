@@ -16,15 +16,21 @@ into `validate_scripts.py` and `run_tier1_sandbox.py` on that run's output, incl
 daemon/image preflight. See `mvp-v2.py` under Commands/Architecture below. The heavier end of Stage 4 now
 has a hand-driven, unintegrated prototype: a disposable, network-isolated KVM/QEMU/libvirt VM instrumented
 with Tracee's eBPF capture — not Cuckoo/CAPE, which was evaluated and deliberately rejected as too
-Windows-malware-oriented for this project's Linux-only scope. It is built and maintained entirely outside
-this repo (in `~/hermes-tier2/` on the development machine, which doubles as the detonation host) and
-neither `mvp-v1.py` nor `mvp-v2.py` calls into it. Institutional sign-off for detonating generated
-offensive code there was obtained 2026-11-16, and one real generated sample has since been executed in it
-— see `data/code_scripts_PAST/level2_cred_disc_lat_mov_QWEN_1/TIER2_TEST_REPORT.md`. The richer
-per-task-type validation-profile registry and any automated oracle still do not exist — a human still
-reads captured output by hand. Full detail: `docs/STAGE4_ROADMAP.md` and `docs/STAGE4_TIER2_SETUP.md`.
-Nor does the second RAG over malware-code samples exist: the current Stage 3 code generation is
-task-conditioned only, not malware-sample-grounded.
+Windows-malware-oriented for this project's Linux-only scope. The VM itself (libvirt domain, network,
+Tracee install) is built and maintained entirely outside this repo, in `~/hermes-tier2/` on the
+development machine, which doubles as the detonation host. The automation that drives it, though, **is**
+in the repo: `run_tier2_vm_sandbox.py` (host-side orchestrator), `tier2_guest_runner.py` (pushed into the
+guest per run), `tier2_rules.py` (a tested deterministic *signal* layer — evidence refs and ATT&CK hints,
+not yet a verdict/label), and `tier2_probes/` (benign test fixtures, including a known-good/known-bad
+pair) — merged into `main` 2026-11-18 from a branch actually authored 2026-11-11. Neither `mvp-v1.py` nor
+`mvp-v2.py` calls into any of this. Institutional sign-off for detonating generated offensive code there
+was obtained 2026-11-16, and one real generated sample has since been executed in the VM — but via a
+simpler direct-SSH method, not through this orchestrator, which has no surviving evidence of ever having
+completed a run against the real VM at all, benign probes included — see
+`data/code_scripts_PAST/level2_cred_disc_lat_mov_QWEN_1/TIER2_TEST_REPORT.md`. The richer per-task-type
+validation-profile registry and any automated verdict/label still do not exist. Full detail:
+`docs/STAGE4_ROADMAP.md` and `docs/STAGE4_TIER2_SETUP.md`. Nor does the second RAG over malware-code
+samples exist: the current Stage 3 code generation is task-conditioned only, not malware-sample-grounded.
 
 **Route change in progress, as of the `build_offense_corpus_linux.py` addition**: the project is pivoting
 to a Linux-only, Python-only scope, and all pipeline development going forward is meant to build on top of
@@ -97,6 +103,14 @@ python validate_scripts.py data/code_scripts/<run-dir> --plan data/plans/human_o
 # disposable, network-isolated, resource-capped container. Requires Docker. Run after Stage 4a.
 docker build -f Dockerfile.tier1 -t hermes-tier1-base:latest .
 python run_tier1_sandbox.py data/code_scripts/<run-dir> --plan data/plans/human_outs/PLAN_<stage1-stem>.json
+
+# Tier 2 (standalone, manual, prototype -- not called by mvp-v1.py/mvp-v2.py): behavioral detonation inside
+# the hermes-tier2-guest VM, not a container. Requires the external ~/hermes-tier2/ lab (see
+# docs/STAGE4_TIER2_SETUP.md) and must run on the machine hosting that VM. Refuses anything under
+# data/code_scripts/ without --section7-signoff-confirmed (docs/STAGE4_ROADMAP.md §7).
+python -m unittest test_tier2_rules                      # rule-layer unit tests; no VM needed
+python run_tier2_vm_sandbox.py tier2_probes/              # benign fixtures, safe without the signoff flag
+python run_tier2_vm_sandbox.py data/code_scripts/<run-dir> --plan data/plans/human_outs/PLAN_<stage1-stem>.json --section7-signoff-confirmed
 
 # One-shot smoke-test driver: runs Stage 1 -> 2 -> 3 back-to-back for a query stored in a .txt file
 # (Stage 2.5 and Stage 4 are not part of this chain)
@@ -183,6 +197,17 @@ python sweep_offense_retrieval_fast.py   # baseline single-config run by default
   peer hits it by design); only an import that raises is. It writes `tier1_manifest.jsonl` into the run dir.
   The base image ships with zero third-party packages on purpose — add one to `Dockerfile.tier1` and
   rebuild only if `validate_scripts.py`'s missing-dependency list names it for a real run.
+- `run_tier2_vm_sandbox.py` is a prototype, not a stable entry point: it needs a real libvirt/KVM VM
+  (`hermes-tier2-guest`) that only exists on the machine `~/hermes-tier2/` was set up on (see
+  `docs/STAGE4_TIER2_SETUP.md`); there's no container fallback. Its `_section7_guard()` refuses anything
+  under `data/code_scripts/` (or any dir containing a `manifest.jsonl`) without
+  `--section7-signoff-confirmed`; `tier2_probes/` is exempt. Reuses Stage 4a's `_resolve_candidates`/
+  `_load_stage2_plan` for the same file-set logic as Tier 1. Pushes `tier2_guest_runner.py` into the guest
+  per file, pulls captured events back, runs `tier2_rules.py` (deterministic signals — file/network/
+  process patterns with ATT&CK hints — never a verdict) over them, and appends to `tier2_manifest.jsonl`
+  in the run dir. As of this writing there's no surviving evidence it has completed a run against the
+  real VM at all, so treat it as unverified in practice even though `test_tier2_rules.py`'s 22 cases pass
+  against synthetic events.
 
 ## Architecture
 

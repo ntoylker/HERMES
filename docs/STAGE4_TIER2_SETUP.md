@@ -18,20 +18,26 @@ after a long gap.
 
 ## 0. The one thing to know before anything else
 
-**None of this infrastructure lives in the git repo.** It's all in `~/hermes-tier2/` on this laptop,
-outside `/home/ntoylker/Desktop/HERMES/mvp/`. It is not version-controlled, not backed up by git, and not
-portable to another machine without redoing most of the steps below. If this laptop's home directory is
-ever lost, this environment is gone and has to be rebuilt from this doc.
+**Two layers exist here, and they are not the same thing.** The VM itself — the libvirt domain, its
+no-egress network, and the Tracee install inside it — lives entirely outside the git repo, in
+`~/hermes-tier2/` on this laptop. It is not version-controlled, not backed up by git, and not portable to
+another machine without redoing most of §1–§7 below. If this laptop's home directory is ever lost, that
+part is gone and has to be rebuilt from this doc.
 
-The repo itself only contains two things related to Tier 2:
+**As of 2026-11-18, the automation that drives that VM *does* live in the repo.**
+`run_tier2_vm_sandbox.py` (host-side orchestrator), `tier2_guest_runner.py` (pushed into the guest per
+run), `tier2_rules.py` (a tested, deterministic signal layer), and `tier2_probes/` (benign test fixtures)
+were merged into `main` from `feat/tier2-vm-orchestrator` — a branch actually **authored 2026-11-11, the
+same day** as the hand-driven session logged in `STAGE4_ROADMAP.md` §10, developed in parallel with it, but
+not reconciled into `main` until today. See §8a for exactly what each file does, how it relates to the
+hand-run testing described elsewhere in this doc, and what evidence does (and doesn't) exist that it's
+actually been exercised against the real VM.
+
+The repo also contains:
 - [STAGE4_ROADMAP.md](STAGE4_ROADMAP.md) (this doc's sibling, design-level)
 - [`data/code_scripts_PAST/level2_cred_disc_lat_mov_QWEN_1/TIER2_TEST_REPORT.md`](../data/code_scripts_PAST/level2_cred_disc_lat_mov_QWEN_1/TIER2_TEST_REPORT.md)
   — the write-up of the one real generated sample tested here so far (see §8 below for how that test
-  relates to — and does *not* go through — the Tracee pipeline described in this doc)
-
-There is no `run_tier2_vm_sandbox.py`-equivalent anywhere, unlike Tier 1's
-`run_tier1_sandbox.py`/`tier1_runner.py`/`Dockerfile.tier1`, which *are* in the repo. Everything here is
-run by hand, over SSH.
+  relates to — and does *not* go through — either the hand-run Tracee pipeline or the new orchestrator)
 
 ## 1. The host
 
@@ -98,6 +104,9 @@ keep as the new baseline, snapshot explicitly (`virsh snapshot-create-as hermes-
 a fresh "before" snapshot specifically before ever touching the active `clean-state` baseline itself.
 
 ## 4. `~/hermes-tier2/` directory layout
+
+(This is the external, non-repo lab directory. For the repo-side orchestrator that now drives it —
+`run_tier2_vm_sandbox.py` and friends, at the repo root — see §8a.)
 
 ```
 ~/hermes-tier2/
@@ -240,9 +249,12 @@ the repo, see §0).
 - A minimal, deliberately benign probe (`ptraceme_probe.py`, one `ptrace(PTRACE_TRACEME)` call on itself)
   triggered a real `anti_debugging` detection — `TRC-102`, MITRE **T1622**, category `defense-evasion` —
   re-run independently with the same result both times.
-- The existing `hermes_guest_runner.py`, run unmodified against `probe_fileio.py`, produced the exact
-  same 216-event, same-per-event-count result as the pre-fix 2026-11-11 run (`sample_runs/run2`) — i.e.
-  **no regression** to the raw-event capture path.
+- The existing *external* `hermes_guest_runner.py` (`~/hermes-tier2/guest/`, not the repo's
+  `tier2_guest_runner.py` — see §8a, which wasn't tested here since it wasn't yet known to be merged),
+  run unmodified against `probe_fileio.py`, produced the exact same 216-event, same-per-event-count
+  result as the pre-fix 2026-11-11 run (`sample_runs/run2`) — i.e. **no regression** to the raw-event
+  capture path. The two runners are near-identical in how they invoke Tracee, so this result should carry
+  over, but hasn't been independently re-checked against the repo's copy.
 - Network egress re-confirmed still blocked after the rebuild (`[Errno 101] Network is unreachable`).
 - `isolated-network.xml` and `hermes_guest_runner.py` both confirmed byte-identical to their pre-fix
   state — the fix touched only Tracee itself.
@@ -257,7 +269,9 @@ was deliberately left unmodified** — it still only requests raw syscall/lifecy
 names. Real pipeline runs through the existing runner will produce **zero** signature detections until
 someone adds the relevant signature names to that list. This is intentional — picking which signatures
 matter for which `task_type` is exactly the work the roadmap's §3 validation-profile registry describes,
-and deliberately wasn't guessed at here. See §9 for the concrete next step.
+and deliberately wasn't guessed at here. (As of 2026-11-18, the same gap exists in the repo's own
+`tier2_guest_runner.py` — see §8a — which is the one that actually matters going forward.) See §9 for the
+concrete next step.
 
 ## 7. The full signature catalog (confirmed live, 2026-11-18)
 
@@ -313,30 +327,128 @@ lateral-movement actually work), but produced no eBPF capture and exercised no s
 
 So, as of this writing: the VM substrate has hosted one real generated sample (with sign-off); the
 Tracee/eBPF capture pipeline described in this doc has only ever observed hand-written benign probes,
-never a real generated sample, signature-fixed or not. Closing that gap — running a real sample *through*
-`hermes_guest_runner.py` with relevant signatures enabled — is still open work.
+never a real generated sample, signature-fixed or not. Closing that gap is still open work — and, per
+§8a, that now means running it through `run_tier2_vm_sandbox.py` (the real orchestrator), not hand-SSHing
+with `hermes_guest_runner.py` as this one test did.
+
+## 8a. The repo-side orchestrator (merged into `main` 2026-11-18)
+
+Everything in this section lives in the git repo at the repo root, not in `~/hermes-tier2/`. It was
+authored 2026-11-11 on a branch (`feat/tier2-vm-orchestrator`) that developed in parallel with the
+hand-run session logged in `STAGE4_ROADMAP.md` §10, and only reconciled into `main` a week later. Read
+every file directly before relying on this summary — this section is a map, not a replacement for the
+source.
+
+**`run_tier2_vm_sandbox.py`** — a real host-side orchestrator, not a stub. Points at the exact same lab
+as the rest of this doc (`DEFAULT_LAB_DIR = ~/hermes-tier2`, `DEFAULT_DOMAIN = hermes-tier2-guest`,
+`DEFAULT_SNAPSHOT = clean-state`, `DEFAULT_NETWORK = hermes-isolated` — all the same defaults used
+throughout §1–§7). Per candidate file: `virsh snapshot-revert` + `virsh start`, re-verifies no-egress
+**empirically, every single run** (not just once — it actually attempts a connection from inside the
+freshly-booted guest and fails closed if that ever succeeds), pushes the target file plus every sibling
+`.py` next to it, SSHes in to run `tier2_guest_runner.py`, pulls the resulting evidence back over a capped
+tar stream (treats the guest as hostile: flat files only, size-capped, never trusts member paths), runs
+`tier2_rules.py` over it, and appends one record to `tier2_evidence/<run>/` + `tier2_manifest.jsonl`. The
+guest is reset to clean again in a `finally` block regardless of outcome. A `.tier2.lock` (`fcntl.flock`,
+non-blocking) enforces one detonation at a time per lab — the same `~/hermes-tier2/.tier2.lock` already
+referenced in §3, which already existed before this merge.
+
+**The §7 institutional sign-off is now enforced in code, not just by convention.**
+`_section7_guard()` refuses to run anything under `data/code_scripts/` or anything whose directory
+contains a `manifest.jsonl` (i.e., anything that looks like real Stage 3 output) unless the operator
+passes `--section7-signoff-confirmed` explicitly. Benign probes (`tier2_probes/`) pass through untouched.
+This is a genuine upgrade over what the rest of this doc describes — until now, that gate was honored by
+habit (always reverting to a clean snapshot, always checking sign-off status before running anything
+real), not by anything that would actually stop a careless invocation.
+
+**`tier2_guest_runner.py`** (repo root) is a close relative of the *external*
+`~/hermes-tier2/guest/hermes_guest_runner.py` referenced throughout §2–§6 — same gate-behind-Tracee-startup
+design, same `TRACEE` path, same `EVENTS` list (so it has the exact same gap: no signature names
+requested, same as the TODO in §9), same `--capabilities bypass=true` workaround. Two differences: it
+copies *every* sibling `.py` file into the guest work directory (not just the target), matching how
+generated files actually import each other by bare module name; and it writes `work_listing.json` —
+names/sizes/modes of whatever the target left behind (never contents, never following symlinks). Going
+forward, **this is the runner that matters** — it's what `run_tier2_vm_sandbox.py` actually pushes and
+invokes. The external hand-written copy remains useful only for manual, ad hoc SSH testing (which is what
+produced every result in §6 above).
+
+**`tier2_rules.py`** is a real, tested deterministic signal layer — directly implementing part of
+roadmap §5.2 ("judge deterministically... a rule engine over the structured report, not an LLM"). Three
+rule families, each with evidence refs (`events.jsonl:<line>`) and ATT&CK hints:
+- *Sensitive file access* — regex-classified credential-looking paths (private SSH keys, AWS/.netrc/
+  .docker/.kube credential files, `/etc/shadow`, generically-named "secret"/"password"/"token" files),
+  each mapped to a real technique ID (T1003.008, T1552.004, T1552.001, T1087.001) and a strength
+  (`weak`/`medium`/`strong`). Correctly excludes system paths that merely *look* credential-ish (PAM
+  config, TLS trust stores, `/proc`, Python's own `getpass.py`) — confirmed by its own test suite.
+- *Network connect attempts* — uses the raw `connect` syscall's real errno, explicitly **not**
+  `security_socket_connect`/`net_tcp_connect`'s always-0 `returnValue` (the exact LSM-attempt-vs-success
+  nuance already documented in §5 above) — and classifies destination scope (loopback/private/public/
+  reserved) via RFC1918.
+- *Child processes* — distinguishes the target's own first exec (not a "child") from genuine descendants,
+  and further distinguishes a shell spawn (T1059.004) from an interpreter spawn (T1059.006) from a plain
+  utility.
+
+**It deliberately stops at signals, never a verdict** — confirmed both by its module docstring
+("observations only, never a verdict or capability label") and by its own test suite, which explicitly
+asserts `"verdict"` is *not* a key in its output. This is real progress toward §5.2, but it is **not**
+§3's per-category validation-profile registry (all three rule families run uniformly over every capture,
+regardless of `task_type` — there is no category-keying here at all) and **not** §6's dataset label
+(`confirmed`/`partial`/`not_observed`/`inconclusive`). Both remain exactly as unbuilt as described in §9
+below; what's changed is that there's now a tested foundation to build them on top of, instead of nothing.
+
+**`test_tier2_rules.py`** — 22 unit tests over synthetic Tracee events (no VM, no execution needed to run
+them). Independently re-run during this review; all 22 pass. Worth knowing this test suite exists and is
+fast — it's the right place to add a case before trusting any change to `tier2_rules.py`.
+
+**`tier2_probes/`** — four benign fixtures, two of which are exactly the "known-good and known-broken"
+validation pair roadmap §9 ("Oracle fairness") says every oracle needs before it's trusted:
+- `probe_clean_control.py` — the **known-good** half: ordinary computation and file I/O, explicitly
+  designed to produce zero signals.
+- `probe_decoy_behaviors.py` — the **known-bad** half: deliberately trips all three rule families at
+  once — decoy `.ssh/id_rsa` and `.aws/credentials` files (fake content, own cwd only, a
+  `DECOY-CANARY-0002` marker), a connect attempt to `192.0.2.1` (an RFC 5737 TEST-NET-1 address —
+  reserved, genuinely non-routable, a safe and deliberate choice), and a shell spawn.
+- `probe_fileio.py` / `probe_hang.py` — the same two probes already described in §2 of this section's
+  external counterpart (`~/hermes-tier2/guest/`), now also version-controlled here.
+
+**What's *not* confirmed: whether this has ever actually run against the real VM.** Both commits are
+dated 2026-11-11 (18:59 and 19:17). `~/hermes-tier2/.tier2.lock`'s modification time (19:10, between the
+two commits) is circumstantial evidence the lock was acquired around then — but no `tier2_manifest.jsonl`
+or `tier2_evidence/` directory survives anywhere on this machine today to confirm a completed detonation.
+Treat "has this been exercised for real" as genuinely unconfirmed rather than assuming either answer.
 
 ## 9. TODO — pick this up here
 
-In rough order, each building on the last:
+In rough order, each building on the last. Updated 2026-11-18 to account for §8a — some of this is now
+real engineering work on top of an existing foundation, not a blank page.
 
-1. **Wire signature names into `hermes_guest_runner.py`'s `EVENTS` list.** Trivial mechanically (append
-   names from §7's catalog), but the actual decision — which signatures are relevant to which `task_type`
-   — is real design work, not a guess. Candidates worth starting from, based on what's documented so far:
-   `anti_debugging`/`ptrace_code_injection`/`process_vm_write_inject` for anything `defense_evasion`- or
-   injection-flavored; `k8s_cert_theft` only if a task ever touches Kubernetes (unlikely given the
-   project's current Linux/Python/non-container scope — may not be relevant at all); none of the 30 are an
-   obvious fit for plain SSH-based lateral movement (the one real sample tested so far) — that gap alone
-   suggests Tracee's bundled set under-covers this project's actual task categories, and custom signatures
-   (or raw-event rules, per roadmap §5.2) may matter more than the bundled 30.
-2. **Build the validation-profile registry itself** (roadmap §3) — still entirely unbuilt. This is where
-   the "which signature(s)/events for which `task_type`" decision actually belongs, not scattered ad hoc
-   into the runner.
-3. **Design the actual oracle logic** (roadmap §5.2) — today, a human reads `events.jsonl` by hand. A
-   deterministic rule engine over the captured JSON (signature events once wired up, plus the raw-event
-   patterns already captured) is still to be built.
-4. **Run a real generated sample through the Tracee pipeline end to end**, closing the gap noted in §8 —
-   ideally the same or a similar sample to the 2026-11-16 SSH test, so the two results can be compared.
+1. **Wire signature names into `tier2_guest_runner.py`'s `EVENTS` list** (the repo copy that matters going
+   forward — see §8a; the external `hermes_guest_runner.py` has the identical gap but is no longer what
+   real runs use). Trivial mechanically (append names from §7's catalog), but the actual decision — which
+   signatures are relevant to which `task_type` — is real design work, not a guess. Candidates worth
+   starting from, based on what's documented so far: `anti_debugging`/`ptrace_code_injection`/
+   `process_vm_write_inject` for anything `defense_evasion`- or injection-flavored; `k8s_cert_theft` only
+   if a task ever touches Kubernetes (unlikely given the project's current Linux/Python/non-container
+   scope — may not be relevant at all); none of the 30 are an obvious fit for plain SSH-based lateral
+   movement (the one real sample tested so far) — that gap alone suggests Tracee's bundled set
+   under-covers this project's actual task categories, and `tier2_rules.py`'s raw-event rules (§8a) may
+   matter more day-to-day than the bundled 30.
+2. **Make `tier2_rules.py` category-aware, and build the validation-profile registry around it** (roadmap
+   §3). Not starting from nothing anymore: §8a's three rule families are a real, tested, generic
+   foundation — but they run uniformly regardless of `task_type` today. The registry work is deciding
+   *which* of these rules (plus which Tracee signatures, once wired in) apply to which category, and
+   authoring the category-specific ones `tier2_rules.py` doesn't cover yet (persistence, discovery,
+   `c2_transport` beyond a bare connect attempt).
+3. **Turn signals into a verdict** (roadmap §5.2's remaining half, and §6's dataset label). `tier2_rules.py`
+   deliberately produces signals only — its own tests assert there is no `"verdict"` field. Deciding how a
+   set of signals (plus, once wired up, which Tracee signature fired) maps to
+   `confirmed`/`partial`/`not_observed`/`inconclusive` is still open, and is exactly the kind of judgment
+   call the roadmap says must stay rule-based, never an LLM's.
+4. **Actually run `run_tier2_vm_sandbox.py` against something, starting with its own probes.** Per §8a,
+   there's no surviving evidence this orchestrator has ever completed a real detonation — not even against
+   the benign `tier2_probes/` it ships with. That's the cheapest possible next step and should happen
+   before trusting it with anything real. Only after that: run a real generated sample through it
+   end-to-end (with `--section7-signoff-confirmed`), closing the gap noted in §8 — ideally the same or a
+   similar sample to the 2026-11-16 SSH test, so the two results can be compared.
 5. Keep an eye on Tracee upstream: `main` (unreleased, as of commit `2f9dc40c20b1`, 2026-09-29) has already
    moved these same 30 signatures into a new, compiled-in-by-default `detectors/` system, which should make
    this project's patch unnecessary once a release ships it. Check

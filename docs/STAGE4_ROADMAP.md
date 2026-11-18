@@ -81,6 +81,12 @@ Each profile is three things — all framed as *observation inside containment*:
    deterministically over the behavioral report (see §5). Prefer **canary/decoy** oracles: plant a unique
    marker, and "the marker surfaced where it should not" is an unambiguous, reproducible signal.
 
+*(2026-11-18: `tier2_rules.py` — merged into `main` from `feat/tier2-vm-orchestrator`, see §10 — is a real,
+tested step toward point 3, but it is explicitly generic, not category-keyed: the same three rule families
+(sensitive-file-access, network-connect-attempt, child-process/shell-spawn) run uniformly over every
+capture regardless of `task_type`. The registry itself — deciding which of those rules, plus which
+category-specific ones, apply per category — is still unbuilt. See `docs/STAGE4_TIER2_SETUP.md` §8a.)*
+
 Observation-level sketches (what to *watch for*, not how to perform anything):
 
 | Category (`task_type`) | Environment | Success oracle (observed signal) |
@@ -139,7 +145,10 @@ which route was actually taken — neither of these two, as sketched; see STAGE4
 
 **5.2. Judge deterministically.** The capability label is a **rule engine over the structured report**, not
 an LLM. Each category's success oracle (§3) is expressed as explicit conditions over observed signals.
-Deterministic judging is reproducible and auditable — essential for a defensible dataset.
+Deterministic judging is reproducible and auditable — essential for a defensible dataset. *(2026-11-18:
+`tier2_rules.py` is exactly this — a tested, deterministic rule engine with evidence refs and ATT&CK hints,
+no LLM involved — but it stops at signals, not a verdict; its own test suite asserts no `"verdict"` key
+exists in its output. See `docs/STAGE4_TIER2_SETUP.md` §8a.)*
 
 **5.3. The headline metric: the ATT&CK round-trip.** Stage 1 grounded the task in a technique; §5.2 observes
 which technique behaviors actually fired. *Claimed technique vs. observed technique* is the project's
@@ -188,7 +197,12 @@ Rung 4 means deliberately detonating code intended to be malicious. Before any o
   update in §10 and STAGE4_TIER2_SETUP.md.)*
 - **Containment preconditions, enforced in code.** No egress; fake-service network or lab peer only;
   VM-level isolation with snapshots for anything beyond self-test; disposable/air-gapped detonation host;
-  kill-switch; strict time/resource caps.
+  kill-switch; strict time/resource caps. *(2026-11-18: the sign-off gate above is now literally "enforced
+  in code" for the first time — `run_tier2_vm_sandbox.py`'s `_section7_guard()` refuses to run anything
+  under `data/code_scripts/` without an explicit `--section7-signoff-confirmed` flag. The no-egress check
+  is also now re-verified empirically on every single run, not just checked once. See
+  `docs/STAGE4_TIER2_SETUP.md` §8a. Fake-service networking, the per-category profiles, and the verdict
+  label are still not code-enforced anywhere.)*
 - **Keep samples in-lab.** Never submit generated samples to third-party or cloud sandboxes — that is
   uncontrolled distribution. Run analysis on infrastructure you control.
 - **Data handling.** Generated code and reports are sensitive research artifacts: access-controlled storage,
@@ -212,10 +226,13 @@ Rung 4 means deliberately detonating code intended to be malicious. Before any o
    2026-11-18 — per §10's progress log and STAGE4_TIER2_SETUP.md: no-egress networking and snapshot/
    rollback are both built and empirically verified; the §7 sign-off is obtained (2026-11-16); one real
    generated sample has run in this environment under that sign-off, via a direct-SSH method (see
-   `TIER2_TEST_REPORT.md`), not through the eBPF capture pipeline described in §10/§5. **Fake-service
-   networking is still entirely unbuilt** — nothing in this environment currently lets network-dependent
-   code attempt a connection to anything but a silently-unreachable address; this remains the one genuinely
-   open item from this phase.)*
+   `TIER2_TEST_REPORT.md`), not through the eBPF capture pipeline described in §10/§5. A real host-side
+   orchestrator and rule layer also now exist (`run_tier2_vm_sandbox.py`/`tier2_rules.py`, merged into
+   `main` today from a branch authored 2026-11-11 — see STAGE4_TIER2_SETUP.md §8a), but there is no
+   surviving evidence either has ever completed a run against the actual VM, benign or otherwise.
+   **Fake-service networking is still entirely unbuilt** — nothing in this environment currently lets
+   network-dependent code attempt a connection to anything but a silently-unreachable address; this remains
+   the one genuinely open item from this phase.)*
 4. **Add capture + deterministic oracle + the ATT&CK round-trip metric** (§5). Label per §6.
 5. **Generalize** to more categories once the two-category loop is trustworthy and the containment is proven.
 
@@ -223,6 +240,11 @@ Rung 4 means deliberately detonating code intended to be malicious. Before any o
 
 - **Oracle fairness.** A weak oracle under-credits working code; an over-eager one false-greens. Each
   oracle needs its own small validation set (known-good and known-broken samples) before it labels anything.
+  *(2026-11-18: `tier2_probes/probe_clean_control.py` (known-good, zero signals expected) and
+  `probe_decoy_behaviors.py` (known-bad, deliberately trips every rule `tier2_rules.py` currently has) are
+  exactly this pair for that rule layer — already built, already used by its 22-case unit test suite. The
+  same discipline still needs applying to whatever category-specific rules get added next. See
+  `docs/STAGE4_TIER2_SETUP.md` §8a.)*
 - **Environment detection.** Sandbox-aware code may suppress behavior under observation → a false
   `not_observed`. Record environment fidelity on every label and treat `not_observed` as weak evidence, not
   proof of harmlessness.
@@ -310,7 +332,10 @@ section.)*
 **Still entirely unbuilt (as of the November 2026 entry above):** the validation-profile registry (§3),
 any category's actual oracle, the guest-side detonation runner and host-side orchestrator (the real
 automation — this prototyping was done by hand over SSH), capture + rule engine + the ATT&CK round-trip
-metric (§5), the dataset label (§6), and §7's institutional sign-off.
+metric (§5), the dataset label (§6), and §7's institutional sign-off. *(⚠ Stale, differently than it looks
+— see the 2026-11-18 update below: the orchestrator/runner/rule-engine pieces of this sentence existed in
+code the whole time, just on an unmerged branch authored the same day as this entry; they weren't
+"unbuilt," they were unreconciled with `main`.)*
 
 ---
 
@@ -325,10 +350,18 @@ now lives in the dedicated companion doc, [STAGE4_TIER2_SETUP.md](STAGE4_TIER2_S
   (STAGE4_TIER2_SETUP.md §8–9).
 - **A guest-side detonation runner now exists** (`~/hermes-tier2/guest/hermes_guest_runner.py`, outside the
   repo) — gates a target script behind Tracee startup, captures scoped eBPF events as JSON, enforces a
-  wall-clock kill-switch. Partially closes the "guest-side detonation runner... entirely unbuilt" line
-  above. **No host-side orchestrator exists yet** — that part of the line above is still accurate.
+  wall-clock kill-switch. *(Superseded by the next bullet as the one that matters going forward — see it
+  before concluding anything from this one in isolation.)*
 - **Tracee's bundled ATT&CK signature plugin is fixed.** The "Not working" finding above is resolved: all
   30 signatures are now compiled directly into the `tracee` binary and verified firing correctly (full
   diagnosis and verification in STAGE4_TIER2_SETUP.md §6–7). Not yet wired into the guest runner's own
   event selection, and never yet exercised against a real sample — both are the next concrete steps
   (STAGE4_TIER2_SETUP.md §9), directly feeding into building the validation-profile registry (§3) above.
+- **`feat/tier2-vm-orchestrator` merged into `main`.** That branch — authored 2026-11-11, the same day as
+  the entry above, developed in parallel with it rather than after it — adds a real host-side orchestrator
+  (`run_tier2_vm_sandbox.py`), a guest-side runner (`tier2_guest_runner.py`), a tested deterministic signal
+  layer (`tier2_rules.py`, 22 passing unit tests, implementing part of §5.2), and benign test probes
+  including a known-good/known-bad validation pair (§9's "Oracle fairness" need). It enforces the §7
+  sign-off gate in code for the first time. Full detail: STAGE4_TIER2_SETUP.md §8a — including the honest
+  caveat that there's no surviving evidence this orchestrator has ever completed a run against the real
+  VM, even against its own benign probes.
