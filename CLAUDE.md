@@ -13,10 +13,18 @@ run against a finished Stage 3 run directory. Each remains invokable by hand aga
 `mvp-v1.py` (Stage 1-3 only) still does not call them — but `mvp-v2.py`, added in the same commit that
 built Stage 4a/Tier 1, **does** wire them in automatically: it runs `mvp-v1.py` and then chains straight
 into `validate_scripts.py` and `run_tier1_sandbox.py` on that run's output, including a Docker-
-daemon/image preflight. See `mvp-v2.py` under Commands/Architecture below. The heavier end of
-Stage 4 — a full behavioral sandbox (Cuckoo/CAPE) and a richer per-task-type/self-test oracle — still does
-not exist, and neither does the second RAG over malware-code samples: the current Stage 3 code generation
-is task-conditioned only, not malware-sample-grounded.
+daemon/image preflight. See `mvp-v2.py` under Commands/Architecture below. The heavier end of Stage 4 now
+has a hand-driven, unintegrated prototype: a disposable, network-isolated KVM/QEMU/libvirt VM instrumented
+with Tracee's eBPF capture — not Cuckoo/CAPE, which was evaluated and deliberately rejected as too
+Windows-malware-oriented for this project's Linux-only scope. It is built and maintained entirely outside
+this repo (in `~/hermes-tier2/` on the development machine, which doubles as the detonation host) and
+neither `mvp-v1.py` nor `mvp-v2.py` calls into it. Institutional sign-off for detonating generated
+offensive code there was obtained 2026-11-16, and one real generated sample has since been executed in it
+— see `data/code_scripts_PAST/level2_cred_disc_lat_mov_QWEN_1/TIER2_TEST_REPORT.md`. The richer
+per-task-type validation-profile registry and any automated oracle still do not exist — a human still
+reads captured output by hand. Full detail: `docs/STAGE4_ROADMAP.md` and `docs/STAGE4_TIER2_SETUP.md`.
+Nor does the second RAG over malware-code samples exist: the current Stage 3 code generation is
+task-conditioned only, not malware-sample-grounded.
 
 **Route change in progress, as of the `build_offense_corpus_linux.py` addition**: the project is pivoting
 to a Linux-only, Python-only scope, and all pipeline development going forward is meant to build on top of

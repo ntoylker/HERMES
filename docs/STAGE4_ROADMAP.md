@@ -1,11 +1,15 @@
 # Stage 4 Roadmap — Behavioral Validation, Containment, and Labeling
 
 Status: **mostly design still.** Today's Stage 4 is Stage 4a (static validation) plus Tier 1 (the
-import-only execution gate); the validation-profile registry, any oracle, and the pipeline automation
-described below do not exist yet. One piece now has a manual, unintegrated proof of concept: §10 logs a
-hand-driven VM + eBPF capture environment, built and verified against a benign probe on a dedicated second
-host — not yet wired into the pipeline, not yet run against a real generated sample, and not yet covered by
-the §7 sign-off that gates doing so. This roadmap describes how the project intends to climb from
+import-only execution gate); the validation-profile registry and any oracle described below do not exist
+yet. One piece has moved past prototype: §10 logs a hand-driven VM + eBPF (Tracee) capture environment.
+Its full setup, build/patch history, and operational detail now live in a dedicated companion doc —
+[STAGE4_TIER2_SETUP.md](STAGE4_TIER2_SETUP.md) — rather than here; this doc stays design/status-level.
+The §7 institutional sign-off has been obtained (2026-11-16), and one real generated sample has since been
+executed in the Tier 2 VM under it — but via a simpler direct-SSH method, not through the eBPF/Tracee
+capture pipeline itself, which to date has only ever observed hand-written benign probes (see
+STAGE4_TIER2_SETUP.md §8 for the exact boundary between the two). This roadmap describes how the project
+intends to climb from
 "the code loads" to "the code *demonstrably performs the declared behavior, under observation, inside a
 sealed lab*" — and, crucially, where that climb must stop.
 
@@ -117,25 +121,41 @@ Isolation alone is necessary but **not sufficient**. Sealed detonation also requ
   the project observe "it tried to connect and hand off a session" without any real peer existing.
 - **Snapshot + rollback**, so each detonation starts clean and leaves nothing.
 - **A disposable/air-gapped host** dedicated to detonation, with a kill-switch and hard time/resource caps.
+  *(What's actually been built, per §10 and STAGE4_TIER2_SETUP.md §1: a disposable, network-isolated guest
+  VM — snapshot/revert-able, no `<forward>` route out, empirically verified — running on this project's
+  ordinary, networked development laptop, not a separate air-gapped machine. The original intent was a
+  dedicated secondary host; nested virtualization on the intended separate Windows machine proved fragile,
+  so this laptop ended up serving both roles. The guest's isolation is real and verified; the host itself
+  was never air-gapped and isn't dedicated to detonation alone.)*
 
 ## 5. Evidence capture and interpretation
 
-1. **Capture.** Detonate under instrumentation that records the process tree, API/syscall activity,
-   file/registry changes, and a network capture. Two routes: an off-the-shelf behavioral sandbox
-   (Cuckoo/**CAPE**), which already emits a structured JSON report with **ATT&CK-tagged** signatures — a
-   natural fit because it speaks the same language as Stage 1 — or a DIY instrumented VM (Sysmon/`strace`/
-   auditd + pcap + filesystem diff) if CAPE's operational overhead isn't worth it early on.
-2. **Judge deterministically.** The capability label is a **rule engine over the structured report**, not an
-   LLM. Each category's success oracle (§3) is expressed as explicit conditions over observed signals.
-   Deterministic judging is reproducible and auditable — essential for a defensible dataset.
-3. **The headline metric: the ATT&CK round-trip.** Stage 1 grounded the task in a technique; §5.2 observes
-   which technique behaviors actually fired. *Claimed technique vs. observed technique* is the project's
-   core measurement, and it closes the loop the rest of the pipeline set up.
-4. **LLM as assistant, never judge.** An LLM may summarize/triage a verbose report, *draft* candidate oracle
-   rules for human review, or attach a natural-language rationale to an already-deterministic label. It must
-   not assign the label itself: an LLM judging LLM output is non-reproducible and circular, and would itself
-   need validating. Keep the verdict rule-based; keep the LLM in an explain/assist role with a human in the
-   loop.
+**5.1. Capture.** Detonate under instrumentation that records the process tree, API/syscall activity,
+file/registry changes, and a network capture. Two routes: an off-the-shelf behavioral sandbox
+(Cuckoo/**CAPE**), which already emits a structured JSON report with **ATT&CK-tagged** signatures — a
+natural fit because it speaks the same language as Stage 1 — or a DIY instrumented VM (Sysmon/`strace`/
+auditd + pcap + filesystem diff) if CAPE's operational overhead isn't worth it early on. *(§10 records
+which route was actually taken — neither of these two, as sketched; see STAGE4_TIER2_SETUP.md.)*
+
+**5.2. Judge deterministically.** The capability label is a **rule engine over the structured report**, not
+an LLM. Each category's success oracle (§3) is expressed as explicit conditions over observed signals.
+Deterministic judging is reproducible and auditable — essential for a defensible dataset.
+
+**5.3. The headline metric: the ATT&CK round-trip.** Stage 1 grounded the task in a technique; §5.2 observes
+which technique behaviors actually fired. *Claimed technique vs. observed technique* is the project's
+core measurement, and it closes the loop the rest of the pipeline set up.
+
+**5.4. LLM as assistant, never judge.** An LLM may summarize/triage a verbose report, *draft* candidate
+oracle rules for human review, or attach a natural-language rationale to an already-deterministic label. It
+must not assign the label itself: an LLM judging LLM output is non-reproducible and circular, and would
+itself need validating. Keep the verdict rule-based; keep the LLM in an explain/assist role with a human in
+the loop.
+
+*(Numbered 5.1–5.4 rather than a plain 1–4 list specifically so the "§5.1"/"§5.2" cross-references already
+used elsewhere in this doc — §10's capture-tooling entry, and §5.3 above referencing §5.2 — point at
+something real instead of an undeclared convention. The mapping (5.1 Capture, 5.2 Judge deterministically,
+5.3 the round-trip metric, 5.4 LLM-as-assistant) matches how those existing references were already being
+used before this renumbering; nothing about which point means what has changed.)*
 
 ## 6. The dataset label
 
@@ -161,7 +181,11 @@ Every label carries the boundary line, so no downstream reader can mistake "conf
 Rung 4 means deliberately detonating code intended to be malicious. Before any of §3–§6 is built or run:
 
 - **Institutional sign-off.** Written approval from the supervising professor / institution for detonating
-  generated offensive code, with scope and handling rules agreed in advance.
+  generated offensive code, with scope and handling rules agreed in advance. *(Status: satisfied — stated
+  directly by the thesis author: "the university has already provided me with legitimate license to
+  conduct such research with the necessary tools and uses." Separately, the specific written sign-off for
+  rung-4 detonation of generated offensive code was confirmed obtained on 2026-11-16 — see the 2026-11-18
+  update in §10 and STAGE4_TIER2_SETUP.md.)*
 - **Containment preconditions, enforced in code.** No egress; fake-service network or lab peer only;
   VM-level isolation with snapshots for anything beyond self-test; disposable/air-gapped detonation host;
   kill-switch; strict time/resource caps.
@@ -184,10 +208,14 @@ Rung 4 means deliberately detonating code intended to be malicious. Before any o
    suggested: `c2_transport` (sealed peer/fake-service) and `credential_access` (canary decoy). The registry
    schema and these two profiles are the primary research artifact.
 3. **Stand up one contained detonation environment** (§4) with no-egress + fake-service + snapshots, gated by
-   the §7 sign-off. Validate containment with a benign probe before any real sample. *(Partially done ahead
-   of §7 sign-off, on infra only: a benign probe has verified no-egress containment on a dedicated second
-   host — see §10. Fake-service networking, snapshots, and the §7 sign-off itself are still outstanding, so
-   this environment is not yet cleared to run anything beyond benign probes.)*
+   the §7 sign-off. Validate containment with a benign probe before any real sample. *(Status as of
+   2026-11-18 — per §10's progress log and STAGE4_TIER2_SETUP.md: no-egress networking and snapshot/
+   rollback are both built and empirically verified; the §7 sign-off is obtained (2026-11-16); one real
+   generated sample has run in this environment under that sign-off, via a direct-SSH method (see
+   `TIER2_TEST_REPORT.md`), not through the eBPF capture pipeline described in §10/§5. **Fake-service
+   networking is still entirely unbuilt** — nothing in this environment currently lets network-dependent
+   code attempt a connection to anything but a silently-unreachable address; this remains the one genuinely
+   open item from this phase.)*
 4. **Add capture + deterministic oracle + the ATT&CK round-trip metric** (§5). Label per §6.
 5. **Generalize** to more categories once the two-category loop is trustworthy and the containment is proven.
 
@@ -210,16 +238,20 @@ no §7 sign-off yet).**
 
 Scope of this entry: building and proving the *environment and capture mechanism* rung 4 needs, exercised
 against a benign probe, per §8 phase 3's instruction to "validate containment with a benign probe before
-any real sample." It does **not** cover the validation-profile registry (§3), any oracle (§3/§5.2), the
-capability label (§6), or running any actual generated sample — those remain entirely unbuilt, and §7's
-institutional sign-off has not been sought, so no real (potentially offensive) generated code has run in
-this environment yet.
+any real sample." It does **not** cover the validation-profile registry (§3), any oracle (§3/§5.2), or the
+capability label (§6) — those remain entirely unbuilt. *(⚠ Stale as of 2026-11-16/18 on the rest of this
+sentence — the §7 sign-off has since been obtained, and one real generated sample has run under it, though
+via a simpler method than the capture pipeline described here. See the dated update at the end of this
+section.)*
 
 - **Host and isolation tier (§4).** Stood up on a dedicated secondary Linux laptop (Ubuntu 24.04,
   KVM-capable, kernel 6.8+ with BTF) acting as the disposable detonation host per §7 — not the development
   machine. KVM/QEMU/libvirt, with a single Ubuntu 24.04 guest VM (`virt-install` + cloud-init) as the
   detonation target. This is the "full virtual machine" tier §4 calls for; the gVisor/Firecracker
-  container-tier alternative for rung 3.5 is untouched by this work.
+  container-tier alternative for rung 3.5 is untouched by this work. *(Correction: in practice this ended
+  up being the same laptop the HERMES repo and development work live on — nested virtualization on the
+  originally-intended separate Windows dev machine proved fragile. Deliberate, not an oversight; see
+  STAGE4_TIER2_SETUP.md §1.)*
 - **No-egress networking (§4), empirically verified, not just configured.** Replaced the guest's default
   NAT network with a libvirt network defined with no `<forward>` element at all (the host can still reach
   the guest for control; the guest has no route anywhere else). Verified with a before/after: the same
@@ -228,7 +260,9 @@ this environment yet.
   renamed network.
 - **Snapshot/rollback (§4): not yet exercised.** The guest has been shut down, reconfigured, and restarted,
   but `virsh snapshot-create-as` / `snapshot-revert` has not actually been used yet. Internal qcow2
-  snapshots are the planned mechanism; still open work.
+  snapshots are the planned mechanism; still open work. *(⚠ Stale as of 2026-11-18 — now exercised
+  repeatedly, both for the 2026-11-16 real-sample test and the signature fix below. See
+  STAGE4_TIER2_SETUP.md §3.)*
 - **Capture tooling (§5), a concrete decision diverging from this doc's original sketch.** §5.1 names
   Cuckoo/CAPE or a DIY `strace`/auditd-based VM as the two routes. CAPE was evaluated and deliberately
   **not** chosen: its community ATT&CK-mapped signature set is overwhelmingly Windows-malware-oriented,
@@ -246,9 +280,16 @@ this environment yet.
     present even within the same official v0.24.1 release tarball). Until resolved, technique-matching
     against Tracee's own signature set is unavailable; only raw events are captured. A rule engine over raw
     events (§5.2) is not blocked by this, but gets no assist from Tracee's own signatures yet.
+    *(⚠ Stale as of 2026-11-18 — fixed. Root cause turned out to be a build-tag mismatch in Tracee's own
+    release pipeline, not a toolchain mismatch; all 30 bundled signatures are now compiled directly into
+    the binary and verified firing correctly. Full diagnosis, patch, and verification:
+    STAGE4_TIER2_SETUP.md §6. Not yet wired into `hermes_guest_runner.py`'s own event selection — see
+    STAGE4_TIER2_SETUP.md §9.)*
   - **Known gap: file I/O is not in Tracee's default event set.** `credential_access`/`collection`/
     `discovery`/`persistence` profiles (§3) will need explicit event selection (e.g. `-e openat,write`) —
-    unconfirmed as of this entry.
+    unconfirmed as of this entry. *(⚠ Resolved — `hermes_guest_runner.py`'s `EVENTS` list already requests
+    `openat`, `security_file_open`, `vfs_write`, rename/chmod/unlink variants, etc. See
+    STAGE4_TIER2_SETUP.md §5.)*
   - **Known nuance for oracle-writing (§5.2, §9 oracle fairness):** `security_socket_connect`/
     `net_tcp_connect`'s `returnValue: 0` reflects an LSM permission check / attempt-observation, not the
     real `connect(2)` errno — confirmed by the no-egress test above showing `returnValue: 0` on both sealed
@@ -266,7 +307,28 @@ this environment yet.
     `CAP_BPF`. Fixed upstream after this version; the workaround is `--capabilities bypass=true` (note the
     `=true` — the bare flag is not sufficient).
 
-**Still entirely unbuilt:** the validation-profile registry (§3), any category's actual oracle, the
-guest-side detonation runner and host-side orchestrator (the real automation — this prototyping was done
-by hand over SSH), capture + rule engine + the ATT&CK round-trip metric (§5), the dataset label (§6), and
-§7's institutional sign-off — which gates running any real generated sample, not just benign probes.
+**Still entirely unbuilt (as of the November 2026 entry above):** the validation-profile registry (§3),
+any category's actual oracle, the guest-side detonation runner and host-side orchestrator (the real
+automation — this prototyping was done by hand over SSH), capture + rule engine + the ATT&CK round-trip
+metric (§5), the dataset label (§6), and §7's institutional sign-off.
+
+---
+
+**2026-11-18 update.** Three things changed since the entry above; full operational detail for all of them
+now lives in the dedicated companion doc, [STAGE4_TIER2_SETUP.md](STAGE4_TIER2_SETUP.md), rather than here:
+
+- **§7 sign-off obtained (2026-11-16).** A real generated sample
+  (`data/code_scripts_PAST/level2_cred_disc_lat_mov_QWEN_1/`) was executed in the Tier 2 VM under it —
+  see [`TIER2_TEST_REPORT.md`](../data/code_scripts_PAST/level2_cred_disc_lat_mov_QWEN_1/TIER2_TEST_REPORT.md).
+  **This did not go through Tracee or the eBPF capture pipeline** — it used a simpler direct-SSH method.
+  The capture pipeline itself has still only ever observed benign probes; closing that gap is open work
+  (STAGE4_TIER2_SETUP.md §8–9).
+- **A guest-side detonation runner now exists** (`~/hermes-tier2/guest/hermes_guest_runner.py`, outside the
+  repo) — gates a target script behind Tracee startup, captures scoped eBPF events as JSON, enforces a
+  wall-clock kill-switch. Partially closes the "guest-side detonation runner... entirely unbuilt" line
+  above. **No host-side orchestrator exists yet** — that part of the line above is still accurate.
+- **Tracee's bundled ATT&CK signature plugin is fixed.** The "Not working" finding above is resolved: all
+  30 signatures are now compiled directly into the `tracee` binary and verified firing correctly (full
+  diagnosis and verification in STAGE4_TIER2_SETUP.md §6–7). Not yet wired into the guest runner's own
+  event selection, and never yet exercised against a real sample — both are the next concrete steps
+  (STAGE4_TIER2_SETUP.md §9), directly feeding into building the validation-profile registry (§3) above.
