@@ -49,3 +49,8 @@ data/code_scripts_PAST/stage3_mvp_test_20260910_20_21_52/*.spec
 # keep bytecode caches excluded even under the un-ignored folders above
 **/__pycache__/
 *.pyc
+
+# Tier 2 per-run VM captures (event streams can be large). Placed AFTER the data/ un-ignore block above:
+# gitignore is last-match-wins, and `!data/code_scripts/**` would otherwise re-include evidence written
+# into a run dir there.
+**/tier2_evidence/
