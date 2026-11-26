@@ -1,0 +1,46 @@
+{
+  "plan_id": "PLAN_20261118_16_49_45",
+  "source_query": "On a Linux system (Ubuntu 22.04, simulated as 192.168.1.50), discover and collect sensitive files \nfrom standard system and user directories without requiring elevated privileges. Specifically:\n- Recursively search /home (user home directories), /tmp (world-writable staging), and \n  /var/log (application logs that may contain credentials/session tokens)\n- Locate files matching patterns: SSH keys (*id_rsa, *id_ed25519), configuration files (*.conf, *.cfg),\n  shell history files (.bash_history, .zsh_history), and text files containing common credential keywords\n- For each discovered file, if readable by the current unprivileged user, copy it to the results/ directory \n  preserving the relative path structure (e.g., home/username/.ssh/id_rsa becomes results/home_username_.ssh_id_rsa)\n- Generate a manifest file (discovery_manifest.json) listing: file paths found, file sizes, \n  readable/non-readable status, and timestamps\n\nThreat model constraints:\n- Target OS: Ubuntu 22.04 LTS (Linux only)\n- Privilege level: unprivileged user (no sudo, no setuid, no root access)\n- Discovery scope: /home, /tmp, /var/log directories only (no filesystem recursion outside these)\n- Collection method: filesystem I/O only (no network access, no shell spawning, no /proc parsing)\n- Exfiltration path: write all discovered files + manifest to results/ directory\n- Expected runtime: <30 seconds on a typical home directory tree (~500 files)\n- No persistence, no C2, no process spawning — single-shot execution",
+  "stage1_ref": "20261118_16_49_45.json",
+  "tasks": [
+    {
+      "task_id": "TASK_001",
+      "task_type": "discovery_collection_staging",
+      "suggested_filename": "sensitive_file_discovery.py",
+      "description": "Implement a single-shot unprivileged Linux collector that recursively searches /home, /tmp, and /var/log for SSH keys, configuration files, shell histories, and credential-bearing text files, copies readable matches into results/ with flattened path names, and writes discovery_manifest.json.",
+      "technique_ids": [
+        "T1083",
+        "T1552.001",
+        "T1005",
+        "T1074.001",
+        "T1119",
+        "T1552.003",
+        "T1552.004"
+      ],
+      "dependencies": [],
+      "provides": [
+        "SEARCH_ROOTS",
+        "RESULTS_DIR",
+        "MANIFEST_NAME",
+        "TARGET_IP",
+        "OS_LABEL",
+        "CREDENTIAL_KEYWORDS",
+        "TEXT_EXTENSIONS",
+        "MAX_CONTENT_SCAN_BYTES",
+        "SensitiveFileFinding",
+        "discover_sensitive_files",
+        "stage_discovered_files",
+        "write_discovery_manifest",
+        "main"
+      ],
+      "consumes": [],
+      "implementation_details": "Use Python 3.11 standard library only: pathlib, os, json, shutil, fnmatch, re, hashlib, datetime, time, and stat. Hardcode SEARCH_ROOTS = [Path('/home'), Path('/tmp'), Path('/var/log')], RESULTS_DIR = Path('results'), MANIFEST_NAME = 'discovery_manifest.json', TARGET_IP = '192.168.1.50', OS_LABEL = 'Ubuntu 22.04', CREDENTIAL_KEYWORDS = ['password', 'passwd', 'secret', 'token', 'api_key', 'apikey', 'access_key', 'private_key', 'credential', 'auth', 'session', 'bearer', 'jwt', 'client_secret', 'aws_access_key_id', 'aws_secret_access_key'], TEXT_EXTENSIONS = ['.txt', '.log', '.conf', '.cfg', '.json', '.ini', '.env', '.sh', '.bash_history', '.zsh_history', '.yaml', '.yml', '.xml', '.properties', '.py', '.js', '.ts', '.rb', '.go', '.java', '.c', '.cpp', '.h', '.md', '.csv', '.sql'], and MAX_CONTENT_SCAN_BYTES = 1048576. Define SensitiveFileFinding as a dataclass with fields source_path, staged_name, size_bytes, readable, mtime, ctime, atime, discovered_at, and match_reasons. discover_sensitive_files() should walk each existing root with os.walk(followlinks=False), ignore permission errors, and avoid subprocess, sockets, and /proc. Match file names with fnmatch patterns '*id_rsa', '*id_ed25519', '*.conf', '*.cfg', '.bash_history', and '.zsh_history'. For text-like files in TEXT_EXTENSIONS or files with no extension and size <= MAX_CONTENT_SCAN_BYTES, read bytes with open(..., 'rb').read().decode('utf-8', errors='ignore') and search case-insensitively for CREDENTIAL_KEYWORDS. Compute staged_name by taking the absolute path without leading slash and replacing every '/' with '_' so /home/user/.ssh/id_rsa becomes home_user_.ssh_id_rsa. Determine readable with os.access(path, os.R_OK) and a guarded open(path, 'rb') test. stage_discovered_files() should create RESULTS_DIR with mkdir(parents=True, exist_ok=True), copy readable findings with shutil.copyfile, and if two findings produce the same staged_name, append an 8-character SHA-256 suffix of the source path to the later name. write_discovery_manifest() should write JSON with metadata including target_ip, os, generated_at, roots, results_dir, and an entries array containing source_path, staged_path, size_bytes, readable, mtime, ctime, atime, discovered_at, and match_reasons. Use ISO 8601 UTC timestamps from datetime.fromtimestamp(ts, tz=timezone.utc).isoformat(). main() should discover, stage, write the manifest, and return 0.",
+      "rag_retrieval_hints": [
+        "Python os.walk recursive directory search permission errors followlinks False",
+        "Python pathlib shutil.copyfile copy file to results directory flattened filename",
+        "Python json manifest os.stat file size mtime ctime atime os.access readable",
+        "Python regex case-insensitive credential keyword search in text files limit file size"
+      ]
+    }
+  ]
+}
